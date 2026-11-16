@@ -32,6 +32,28 @@ export function mergeItNote(prev: ItNote[], incoming: ItNote): ItNote[] {
 
 const CLIENT_ID_KEY = 'tristellar_team_client_id';
 const OPERATOR_PREF_KEY = 'tristellar_team_operator_name';
+const AUTH_USER_KEY = 'tristellar_auth_user';
+const TEAM_ACCOUNTS: Record<string, string> = {
+  mark: 'Mark',
+  francis: 'Francis',
+  vhon: 'Vhon',
+};
+
+function getAuthenticatedOperator(): string | null {
+  try {
+    const stored = localStorage.getItem(AUTH_USER_KEY)?.trim().toLowerCase();
+    return stored ? TEAM_ACCOUNTS[stored] ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+function getOperatorRole(name: string): string {
+  if (name === 'Mark') return 'IT Lead';
+  if (name === 'Francis') return 'IT Support';
+  if (name === 'Vhon') return 'IT Admin';
+  return 'TRISTELLAR IT';
+}
 
 export function getOrCreateClientId(): string {
   try {
@@ -76,7 +98,7 @@ class TeamSocketClient {
   private connected = false;
 
   connect(presence: OnlinePresenceUser): void {
-    this.currentPresence = presence;
+    this.currentPresence = this.bindPresenceToAccount(presence);
     this.intentionalClose = false;
 
     if (
@@ -85,12 +107,22 @@ class TeamSocketClient {
         this.ws.readyState === WebSocket.CONNECTING)
     ) {
       if (this.ws.readyState === WebSocket.OPEN) {
-        this.announcePresence(presence);
+        this.announcePresence(this.currentPresence);
       }
       return;
     }
 
     this.openSocket();
+  }
+
+  private bindPresenceToAccount(presence: OnlinePresenceUser): OnlinePresenceUser {
+    const accountName = getAuthenticatedOperator();
+    if (!accountName) return presence;
+    return {
+      ...presence,
+      userName: accountName,
+      role: getOperatorRole(accountName),
+    };
   }
 
   private openSocket(): void {
@@ -173,15 +205,23 @@ class TeamSocketClient {
   }
 
   announcePresence(presence: OnlinePresenceUser): void {
-    this.currentPresence = presence;
+    this.currentPresence = this.bindPresenceToAccount(presence);
     this.sendFrame({
       type: 'presence:join',
-      ...presence,
+      ...this.currentPresence,
     });
   }
 
   sendChatMessage(message: TeamChatMessage): void {
-    this.sendFrame({ type: 'chat:send', message });
+    const accountName = getAuthenticatedOperator();
+    const sender = accountName || this.currentPresence?.userName || message.sender;
+    const senderRole = accountName
+      ? getOperatorRole(accountName)
+      : this.currentPresence?.role || message.senderRole;
+    this.sendFrame({
+      type: 'chat:send',
+      message: { ...message, sender, senderRole },
+    });
   }
 
   deleteChatMessage(id: string): void {
