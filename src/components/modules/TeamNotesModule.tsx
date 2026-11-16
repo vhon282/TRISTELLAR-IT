@@ -107,7 +107,7 @@ function formatTimestamp(iso: string): string {
 function getOperatorRole(name: string): string {
   if (name === 'Mac') return 'IT Lead';
   if (name === 'Francis') return 'IT Support';
-  if (name === 'Shem') return 'Field Tech';
+  if (name === 'Vhon') return 'IT Support';
   if (name === 'IT Admin') return 'Administrator';
   return 'IT Technician';
 }

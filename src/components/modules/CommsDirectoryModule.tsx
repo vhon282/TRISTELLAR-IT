@@ -137,6 +137,11 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   const [assignDeviceType, setAssignDeviceType] =
     useState<VoucherDeviceType>('Company Laptop');
 
+  const [voucherModalOpen, setVoucherModalOpen] = useState(false);
+  const [newVoucherCodesText, setNewVoucherCodesText] = useState('');
+  const [newVoucherDeviceType, setNewVoucherDeviceType] =
+    useState<VoucherDeviceType>('Company Laptop');
+
   React.useEffect(() => {
     setSubTab(initialSubTab);
   }, [initialSubTab]);
@@ -147,7 +152,14 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   );
 
   React.useEffect(() => {
-    if (!assignVoucherCode && availableVouchers.length > 0) {
+    if (availableVouchers.length === 0) {
+      if (assignVoucherCode) setAssignVoucherCode('');
+      return;
+    }
+    const stillAvailable = availableVouchers.some(
+      (v) => v.voucherCode === assignVoucherCode
+    );
+    if (!assignVoucherCode || !stillAvailable) {
       setAssignVoucherCode(availableVouchers[0].voucherCode);
     }
   }, [availableVouchers, assignVoucherCode]);
@@ -369,27 +381,32 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
       };
     }
 
-    const vouchers: WifiVoucher[] = rows.map((row) => {
-      const emp = pickField(row, ['Employee Name', 'Employee']);
-      const rawStatus = pickField(row, ['Status']);
-      const status: VoucherStatus =
-        rawStatus.toLowerCase() === 'used' || Boolean(emp) ? 'Used' : 'Available';
-      const rawDevice = pickField(row, ['Device Type', 'Device']);
-      const deviceType: VoucherDeviceType = rawDevice.toLowerCase().includes('company phone')
-        ? 'Company Phone'
-        : rawDevice.toLowerCase().includes('personal')
-        ? 'Personal Phone'
-        : 'Company Laptop';
-      return {
-        id: generateUid('wv'),
-        date: pickField(row, ['Date']) || new Date().toISOString().slice(0, 10),
-        voucherCode: pickField(row, ['Voucher Code', 'Code', 'Voucher']),
-        employeeName: emp,
-        employeeNumber: pickField(row, ['Employee #', 'Employee Number', 'Emp No']),
-        deviceType,
-        status,
-      };
-    });
+    const vouchers: WifiVoucher[] = rows
+      .map((row) => {
+        const emp = pickField(row, ['Employee Name', 'Employee']);
+        const rawStatus = pickField(row, ['Status']);
+        const status: VoucherStatus =
+          rawStatus.toLowerCase() === 'used' || Boolean(emp) ? 'Used' : 'Available';
+        const rawDevice = pickField(row, ['Device Type', 'Device']);
+        const deviceType: VoucherDeviceType = rawDevice.toLowerCase().includes('company phone')
+          ? 'Company Phone'
+          : rawDevice.toLowerCase().includes('personal')
+          ? 'Personal Phone'
+          : 'Company Laptop';
+        const code =
+          pickField(row, ['Voucher Code', 'Code', 'Voucher']) ||
+          (Object.values(row)[0]?.trim() ?? '');
+        return {
+          id: generateUid('wv'),
+          date: pickField(row, ['Date']) || new Date().toISOString().slice(0, 10),
+          voucherCode: code,
+          employeeName: emp,
+          employeeNumber: pickField(row, ['Employee #', 'Employee Number', 'Emp No']),
+          deviceType,
+          status,
+        };
+      })
+      .filter((v) => Boolean(v.voucherCode));
     onBulkImportVouchers(vouchers);
     return { importedCount: vouchers.length, summary: `Imported ${vouchers.length} Wi-Fi vouchers.` };
   };
@@ -472,23 +489,37 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
               </span>
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setEditingAuthDevice(null);
-                setAuthForm({
-                  employeeName: '',
-                  allowedQty: 2,
-                  deviceBreakdown: '1 Laptop, 1 Company',
-                  department: '',
-                });
-                setAuthDeviceModalOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Authorized Employee</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewVoucherCodesText('');
+                  setNewVoucherDeviceType('Company Laptop');
+                  setVoucherModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Voucher</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingAuthDevice(null);
+                  setAuthForm({
+                    employeeName: '',
+                    allowedQty: 2,
+                    deviceBreakdown: '1 Laptop, 1 Company',
+                    department: '',
+                  });
+                  setAuthDeviceModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Authorized Employee</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -919,22 +950,25 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
               <div>
                 <label className="block text-[11px] font-medium text-stone-500 dark:text-stone-400 mb-1">
-                  Voucher Code
+                  Voucher Code (Available)
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  list="available-voucher-codes"
                   value={assignVoucherCode}
                   onChange={(e) => setAssignVoucherCode(e.target.value)}
-                  placeholder="84920-1185"
+                  aria-label="Select Available Voucher Code"
                   className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100"
-                />
-                <datalist id="available-voucher-codes">
-                  {availableVouchers.map((v) => (
-                    <option key={v.id} value={v.voucherCode} />
-                  ))}
-                </datalist>
+                >
+                  {availableVouchers.length === 0 ? (
+                    <option value="">No available vouchers — add or import CSV</option>
+                  ) : (
+                    availableVouchers.map((v) => (
+                      <option key={v.id} value={v.voucherCode}>
+                        {v.voucherCode} — Available
+                      </option>
+                    ))
+                  )}
+                </select>
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-stone-500 dark:text-stone-400 mb-1">
@@ -984,7 +1018,8 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
               <div className="flex items-end">
                 <button
                   type="submit"
-                  className="w-full px-4 py-2 text-xs font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap"
+                  disabled={availableVouchers.length === 0 || !assignVoucherCode}
+                  className="w-full px-4 py-2 text-xs font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-45 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                 >
                   Issue Voucher
                 </button>
@@ -1515,6 +1550,82 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
         }
         onImportRows={handleImportCsv}
       />
+
+      {/* Add Available Wi-Fi Vouchers Modal */}
+      <Modal
+        isOpen={voucherModalOpen}
+        onClose={() => setVoucherModalOpen(false)}
+        title="Add Available Wi-Fi Vouchers"
+        subtitle="Enter one or more voucher codes (one per line or comma-separated) to stock them as Available."
+        maxWidthClass="max-w-md"
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const codes = newVoucherCodesText
+              .split(/[\n,;]+/)
+              .map((s) => s.trim())
+              .filter(Boolean);
+            if (codes.length === 0) return;
+            const today = new Date().toISOString().slice(0, 10);
+            const items: WifiVoucher[] = codes.map((code) => ({
+              id: generateUid('wv'),
+              date: today,
+              voucherCode: code,
+              employeeName: '',
+              employeeNumber: '',
+              deviceType: newVoucherDeviceType,
+              status: 'Available',
+            }));
+            onBulkImportVouchers(items);
+            setVoucherModalOpen(false);
+          }}
+          className="space-y-3.5"
+        >
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              Voucher Code(s) *
+            </label>
+            <textarea
+              required
+              rows={4}
+              value={newVoucherCodesText}
+              onChange={(e) => setNewVoucherCodesText(e.target.value)}
+              placeholder={'84920-1188\n84920-1189\n84920-1190'}
+              className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950 text-stone-900 dark:text-stone-100"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">
+              Default Device Type
+            </label>
+            <select
+              value={newVoucherDeviceType}
+              onChange={(e) => setNewVoucherDeviceType(e.target.value as VoucherDeviceType)}
+              className="w-full px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950 text-stone-900 dark:text-stone-100"
+            >
+              <option value="Company Laptop">Company Laptop</option>
+              <option value="Company Phone">Company Phone</option>
+              <option value="Personal Phone">Personal Phone</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-3 border-t border-stone-200 dark:border-stone-800">
+            <button
+              type="button"
+              onClick={() => setVoucherModalOpen(false)}
+              className="px-4 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-xs font-semibold rounded-lg bg-orange-600 hover:bg-orange-700 text-white"
+            >
+              Add Available Vouchers
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };

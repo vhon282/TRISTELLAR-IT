@@ -2,7 +2,7 @@ import { CmmsDatabase, MaintenanceChecklistItem } from '../types/cmms';
 
 export const BRANCHES = ['Conchu', 'Main', 'Bacoor', 'Amaya', 'Bulacan'] as const;
 export const CATEGORIES = ['Computer', 'Printer', 'Peripherals'] as const;
-export const TECHNICIANS = ['Mac', 'Francis', 'Shem'] as const;
+export const TECHNICIANS = ['Mac', 'Francis', 'Vhon'] as const;
 export const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'] as const;
 export const CONDITIONS = ['GOOD', 'FAIR', 'POOR', 'BAD'] as const;
 export const OPERATIONAL_STATUSES = [
@@ -414,7 +414,7 @@ export const SEED_DATABASE: CmmsDatabase = {
       branchLocation: 'Bacoor',
       quarter: 'Q2',
       year: 2026,
-      technician: 'Shem',
+      technician: 'Vhon',
       scheduledDate: '2026-05-18',
       actualDate: '2026-05-20',
       status: 'Done',
@@ -431,7 +431,7 @@ export const SEED_DATABASE: CmmsDatabase = {
       branchLocation: 'Amaya',
       quarter: 'Q3',
       year: 2026,
-      technician: 'Shem',
+      technician: 'Vhon',
       scheduledDate: '2026-08-14',
       actualDate: '2026-08-14',
       status: 'Done',
@@ -536,7 +536,7 @@ export const SEED_DATABASE: CmmsDatabase = {
       branchLocation: 'Amaya',
       quarter: 'Q4',
       year: 2026,
-      technician: 'Shem',
+      technician: 'Vhon',
       scheduledDate: '2026-11-22',
       actualDate: '',
       status: 'Pending',
@@ -553,7 +553,7 @@ export const SEED_DATABASE: CmmsDatabase = {
       branchLocation: 'Conchu',
       quarter: 'Q4',
       year: 2026,
-      technician: 'Shem',
+      technician: 'Vhon',
       scheduledDate: '2026-10-30',
       actualDate: '2026-10-30',
       status: 'Done',
@@ -840,7 +840,7 @@ export const SEED_DATABASE: CmmsDatabase = {
       cameraNo: 'A1',
       ipAddress: '192.168.130.10',
       locationArea: 'Receiving Gate 2',
-      statusNotes: 'Online · Verified by Shem',
+      statusNotes: 'Online · Verified by Vhon',
     },
   ],
   radioEntries: [
@@ -902,7 +902,7 @@ export const SEED_DATABASE: CmmsDatabase = {
     },
     {
       id: 'rad-008',
-      personnelOrUnit: 'Mac / Francis / Shem',
+      personnelOrUnit: 'Mac / Francis / Vhon',
       departmentRole: 'IT',
       callsign: 'India',
       channelNo: 'CH 06',
@@ -956,7 +956,7 @@ export const SEED_DATABASE: CmmsDatabase = {
     },
     {
       id: 'wad-005',
-      employeeName: 'Shem Navarro',
+      employeeName: 'Vhon',
       allowedQty: 2,
       deviceBreakdown: '1 Laptop, 1 Personal',
       department: 'IT',
@@ -969,60 +969,5 @@ export const SEED_DATABASE: CmmsDatabase = {
       department: 'Conchu Branch',
     },
   ],
-  wifiVouchers: [
-    {
-      id: 'wv-001',
-      date: '2026-11-14',
-      voucherCode: '84920-1182',
-      employeeName: 'Jack Mendoza',
-      employeeNumber: 'TTC-2883381',
-      deviceType: 'Company Laptop',
-      status: 'Used',
-    },
-    {
-      id: 'wv-002',
-      date: '2026-11-14',
-      voucherCode: '84920-1183',
-      employeeName: 'Clarissa Reyes',
-      employeeNumber: 'TTC-2883409',
-      deviceType: 'Company Phone',
-      status: 'Used',
-    },
-    {
-      id: 'wv-003',
-      date: '2026-11-15',
-      voucherCode: '84920-1184',
-      employeeName: 'Shem Navarro',
-      employeeNumber: 'TTC-2883512',
-      deviceType: 'Personal Phone',
-      status: 'Used',
-    },
-    {
-      id: 'wv-004',
-      date: '2026-11-15',
-      voucherCode: '84920-1185',
-      employeeName: '',
-      employeeNumber: '',
-      deviceType: 'Company Laptop',
-      status: 'Available',
-    },
-    {
-      id: 'wv-005',
-      date: '2026-11-15',
-      voucherCode: '84920-1186',
-      employeeName: '',
-      employeeNumber: '',
-      deviceType: 'Company Phone',
-      status: 'Available',
-    },
-    {
-      id: 'wv-006',
-      date: '2026-11-15',
-      voucherCode: '84920-1187',
-      employeeName: '',
-      employeeNumber: '',
-      deviceType: 'Personal Phone',
-      status: 'Available',
-    },
-  ],
+  wifiVouchers: [],
 };

@@ -78,8 +78,12 @@ function normalizeTask(task: MaintenanceTask, idx: number): MaintenanceTask {
       ? task.quarter
       : 'Q4';
 
+  const normalizedTech =
+    (task.technician as string) === 'Shem' ? 'Vhon' : task.technician;
+
   return {
     ...task,
+    technician: normalizedTech,
     year: parsedYear,
     quarter: validQuarter,
     seqNumber: task.seqNumber || `${parsedYear}4TH-${String(idx + 1).padStart(2, '0')}`,
@@ -88,10 +92,35 @@ function normalizeTask(task: MaintenanceTask, idx: number): MaintenanceTask {
   };
 }
 
+const DEMO_VOUCHER_IDS = new Set([
+  'wv-001',
+  'wv-002',
+  'wv-003',
+  'wv-004',
+  'wv-005',
+  'wv-006',
+]);
+
 export function normalizeDatabase(partial: Partial<CmmsDatabase>): CmmsDatabase {
   const rawTasks = Array.isArray(partial.maintenanceTasks)
     ? partial.maintenanceTasks
     : structuredClone(SEED_DATABASE.maintenanceTasks);
+
+  const rawCctv = Array.isArray(partial.cctvEntries)
+    ? partial.cctvEntries
+    : structuredClone(SEED_DATABASE.cctvEntries);
+
+  const rawRadio = Array.isArray(partial.radioEntries)
+    ? partial.radioEntries
+    : structuredClone(SEED_DATABASE.radioEntries);
+
+  const rawAuthDevices = Array.isArray(partial.wifiAuthorizedDevices)
+    ? partial.wifiAuthorizedDevices
+    : structuredClone(SEED_DATABASE.wifiAuthorizedDevices);
+
+  const rawVouchers = Array.isArray(partial.wifiVouchers)
+    ? partial.wifiVouchers.filter((v) => !DEMO_VOUCHER_IDS.has(v.id))
+    : [];
 
   return {
     version: typeof partial.version === 'number' ? partial.version : 1,
@@ -107,18 +136,20 @@ export function normalizeDatabase(partial: Partial<CmmsDatabase>): CmmsDatabase 
     anydeskEntries: Array.isArray(partial.anydeskEntries)
       ? partial.anydeskEntries
       : structuredClone(SEED_DATABASE.anydeskEntries),
-    cctvEntries: Array.isArray(partial.cctvEntries)
-      ? partial.cctvEntries
-      : structuredClone(SEED_DATABASE.cctvEntries),
-    radioEntries: Array.isArray(partial.radioEntries)
-      ? partial.radioEntries
-      : structuredClone(SEED_DATABASE.radioEntries),
-    wifiAuthorizedDevices: Array.isArray(partial.wifiAuthorizedDevices)
-      ? partial.wifiAuthorizedDevices
-      : structuredClone(SEED_DATABASE.wifiAuthorizedDevices),
-    wifiVouchers: Array.isArray(partial.wifiVouchers)
-      ? partial.wifiVouchers
-      : structuredClone(SEED_DATABASE.wifiVouchers),
+    cctvEntries: rawCctv.map((c) =>
+      c.statusNotes === 'Online · Verified by Shem'
+        ? { ...c, statusNotes: 'Online · Verified by Vhon' }
+        : c
+    ),
+    radioEntries: rawRadio.map((r) =>
+      r.personnelOrUnit === 'Mac / Francis / Shem'
+        ? { ...r, personnelOrUnit: 'Mac / Francis / Vhon' }
+        : r
+    ),
+    wifiAuthorizedDevices: rawAuthDevices.map((d) =>
+      d.employeeName === 'Shem Navarro' ? { ...d, employeeName: 'Vhon' } : d
+    ),
+    wifiVouchers: rawVouchers,
   };
 }
 

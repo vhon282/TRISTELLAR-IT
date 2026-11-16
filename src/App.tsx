@@ -15,6 +15,7 @@ import {
   X,
   ArrowRight,
   MessageSquareText,
+  LogOut,
 } from 'lucide-react';
 import {
   ActiveModule,
@@ -59,19 +60,19 @@ import {
 } from './components/modules/CommsDirectoryModule';
 import { TeamNotesModule } from './components/modules/TeamNotesModule';
 import { BackupRestoreModal } from './components/modals/BackupRestoreModal';
-import { OperatorLoginModal } from './components/modals/OperatorLoginModal';
+import { LoginScreen } from './components/auth/LoginScreen';
+import {
+  AuthUser,
+  clearAuthSession,
+  loadAuthSession,
+  saveAuthSession,
+} from './services/auth';
 
 interface NavItem {
   id: ActiveModule;
   label: string;
   icon: React.ReactNode;
 }
-
-const AUTH_USERS: Record<string, string> = {
-  mark: '3Stellar',
-  francis: '3Stellar',
-  vhon: '3Stellar',
-};
 
 const NAV_ITEMS: NavItem[] = [
   {
@@ -123,45 +124,27 @@ export default function App() {
   const [searchFocused, setSearchFocused] = useState(false);
   const searchWrapperRef = useRef<HTMLDivElement | null>(null);
 
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => loadAuthSession());
   const [backupModalOpen, setBackupModalOpen] = useState(false);
-  const [authUser, setAuthUser] = useState<string | null>(() => {
-    try {
-      const saved = localStorage.getItem('tristellar_auth_user');
-      return saved && saved.trim() ? saved.trim() : null;
-    } catch {
-      return null;
-    }
-  });
 
+  // Real-time Team Chat & IT Notes state (server-authoritative via WebSocket)
   const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
   const [itNotes, setItNotes] = useState<ItNote[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlinePresenceUser[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
-  const [operatorName, setOperatorName] = useState<string>(() => {
-    const saved = authUser || loadSavedOperator();
-    return saved || 'Mac';
-  });
+  const [operatorName, setOperatorName] = useState<string>(
+    () => loadAuthSession()?.displayName || loadSavedOperator()
+  );
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const clientIdRef = useRef<string>(getOrCreateClientId());
   const activeModuleRef = useRef<ActiveModule>(activeModule);
   const operatorNameRef = useRef<string>(operatorName);
 
-  const handleLogin = (username: string, password: string): boolean => {
-    const key = username.trim().toLowerCase();
-    const expected = AUTH_USERS[key];
-    if (!expected || password !== expected) return false;
-
-    const name = key.charAt(0).toUpperCase() + key.slice(1);
-    setAuthUser(name);
-    setOperatorName(name);
-    saveOperatorPreference(name);
-    try {
-      localStorage.setItem('tristellar_auth_user', name);
-    } catch {
-      // ignore storage errors
+  useEffect(() => {
+    if (authUser) {
+      setOperatorName(authUser.displayName);
     }
-    return true;
-  };
+  }, [authUser]);
 
   useEffect(() => {
     activeModuleRef.current = activeModule;
@@ -173,18 +156,29 @@ export default function App() {
   useEffect(() => {
     operatorNameRef.current = operatorName;
     saveOperatorPreference(operatorName);
-    teamSocket.announcePresence({
-      clientId: clientIdRef.current,
-      userName: operatorName,
-      role: 'TRISTELLAR IT',
-    });
-  }, [operatorName]);
+    if (authUser) {
+      teamSocket.announcePresence({
+        clientId: clientIdRef.current,
+        userName: operatorName,
+        role: authUser.role || 'TRISTELLAR IT',
+      });
+    }
+  }, [operatorName, authUser]);
 
+  // Load persisted CMMS data once on mount
   useEffect(() => {
     storageAdapter.load().then((loaded) => {
       setDb(loaded);
       setIsLoaded(true);
     });
+  }, []);
+
+  // Initial Team Chat/Notes REST hydration + WebSocket subscription when signed in
+  useEffect(() => {
+    if (!authUser) {
+      teamSocket.disconnect();
+      return;
+    }
 
     fetch('/api/team/state')
       .then((res) => (res.ok ? res.json() : null))
@@ -227,8 +221,8 @@ export default function App() {
 
     teamSocket.connect({
       clientId: clientIdRef.current,
-      userName: operatorNameRef.current,
-      role: 'TRISTELLAR IT',
+      userName: authUser.displayName,
+      role: authUser.role || 'TRISTELLAR IT',
     });
 
     return () => {
@@ -236,8 +230,9 @@ export default function App() {
       unsubEvents();
       teamSocket.disconnect();
     };
-  }, []);
+  }, [authUser]);
 
+  // Sync theme class on <html>
   useEffect(() => {
     const root = document.documentElement;
     if (theme === 'dark') {
@@ -248,6 +243,7 @@ export default function App() {
     saveThemePreference(theme);
   }, [theme]);
 
+  // Close global search dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (
@@ -269,6 +265,7 @@ export default function App() {
     });
   };
 
+  // Global live search across all modules
   const globalResults = useMemo<GlobalSearchResult[]>(() => {
     const q = globalQuery.trim().toLowerCase();
     if (!q) return [];
@@ -403,6 +400,7 @@ export default function App() {
     setMobileMenuOpen(false);
   };
 
+  // Upsert helpers
   const upsertById = <T extends { id: string }>(list: T[], item: T): T[] => {
     const exists = list.some((x) => x.id === item.id);
     return exists ? list.map((x) => (x.id === item.id ? item : x)) : [item, ...list];
@@ -422,14 +420,19 @@ export default function App() {
     }));
   };
 
-  const handleBulkImportAssetsAndPm = (newAssets: Asset[], newTasks: MaintenanceTask[]) => {
+  const handleBulkImportAssetsAndPm = (
+    newAssets: Asset[],
+    newTasks: MaintenanceTask[]
+  ) => {
     updateDb((prev) => {
       let nextAssets = [...prev.assets];
       for (const item of newAssets) {
         nextAssets = upsertById(nextAssets, item);
       }
       const nextTasks =
-        newTasks.length > 0 ? [...newTasks, ...prev.maintenanceTasks] : prev.maintenanceTasks;
+        newTasks.length > 0
+          ? [...newTasks, ...prev.maintenanceTasks]
+          : prev.maintenanceTasks;
       return {
         ...prev,
         assets: nextAssets,
@@ -438,7 +441,10 @@ export default function App() {
     });
   };
 
-  const handleSaveMaintenanceTask = (task: MaintenanceTask, updateParentAsset: boolean) => {
+  const handleSaveMaintenanceTask = (
+    task: MaintenanceTask,
+    updateParentAsset: boolean
+  ) => {
     updateDb((prev) => {
       const nextTasks = upsertById(prev.maintenanceTasks, task);
       let nextAssets = prev.assets;
@@ -608,10 +614,30 @@ export default function App() {
     });
   };
 
+  const handleSignOut = () => {
+    clearAuthSession();
+    setAuthUser(null);
+    setMobileMenuOpen(false);
+    setBackupModalOpen(false);
+  };
+
+  if (!authUser) {
+    return (
+      <LoginScreen
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
+        onLoginSuccess={(user) => {
+          saveAuthSession(user);
+          setAuthUser(user);
+          setOperatorName(user.displayName);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen flex bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100">
-      {!authUser && <OperatorLoginModal onLogin={handleLogin} />}
-
+      {/* Mobile Sidebar Backdrop */}
       {mobileMenuOpen && (
         <div
           className="fixed inset-0 z-40 bg-stone-950/50 lg:hidden"
@@ -619,13 +645,17 @@ export default function App() {
         />
       )}
 
+      {/* Left Collapsible Navigation Sidebar */}
       <aside
         className={`fixed lg:sticky top-0 left-0 z-40 h-screen bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-800 flex flex-col transition-all duration-200 shrink-0 ${
           sidebarCollapsed ? 'lg:w-[68px]' : 'lg:w-[248px]'
         } ${
-          mobileMenuOpen ? 'translate-x-0 w-[248px]' : '-translate-x-full lg:translate-x-0'
+          mobileMenuOpen
+            ? 'translate-x-0 w-[248px]'
+            : '-translate-x-full lg:translate-x-0'
         }`}
       >
+        {/* Sidebar Brand */}
         <div className="h-14 px-4 flex items-center justify-between border-b border-stone-200 dark:border-stone-800">
           <button
             type="button"
@@ -652,6 +682,7 @@ export default function App() {
           </button>
         </div>
 
+        {/* Navigation Links */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto" aria-label="Primary Navigation">
           {NAV_ITEMS.map((item) => {
             const active = activeModule === item.id;
@@ -686,6 +717,7 @@ export default function App() {
           })}
         </nav>
 
+        {/* Collapse Sidebar Toggle (Desktop) */}
         <div className="hidden lg:block p-3 border-t border-stone-200 dark:border-stone-800">
           <button
             type="button"
@@ -704,8 +736,10 @@ export default function App() {
         </div>
       </aside>
 
+      {/* Main Content Shell */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="sticky top-0 z-30 h-14 bg-white/95 dark:bg-stone-900/95 backdrop-blur border-b border-stone-200 dark:border-stone-800 px-4 lg:px-6 flex items-center justify-between gap-3">
+        {/* Top Bar */}
+        <header className="sticky top-0 z-30 h-14 bg-white/95 dark:bg-stone-900/95 backdrop-blur border-b border-stone-200 dark:border-stone-800 px-4 lg:px-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <button
               type="button"
@@ -716,6 +750,7 @@ export default function App() {
               <Menu className="w-4 h-4" />
             </button>
 
+            {/* Global Search Bar */}
             <div ref={searchWrapperRef} className="relative flex-1 max-w-md">
               <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
@@ -727,7 +762,7 @@ export default function App() {
                   setSearchFocused(true);
                 }}
                 placeholder="Global search: asset code, AnyDesk ID, CCTV IP, callsign, voucher..."
-                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
               />
 
               {searchFocused && globalQuery.trim().length > 0 && (
@@ -774,14 +809,19 @@ export default function App() {
             </div>
           </div>
 
+          {/* Top Bar Right Controls: Operator, Backup/Restore JSON, Theme Toggle, Sign Out */}
           <div className="flex items-center gap-2 shrink-0">
-            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 px-2.5 py-1.5 text-[11px] font-medium text-stone-600 dark:text-stone-300">
-              <span className="font-mono text-orange-600 dark:text-orange-400">{operatorName}</span>
-            </div>
+            <span className="hidden md:inline-flex items-center px-2 py-1 text-xs font-medium text-stone-500 dark:text-stone-400 whitespace-nowrap shrink-0">
+              Operator:
+              <strong className="ml-1 font-semibold text-stone-900 dark:text-stone-100">
+                {authUser.displayName}
+              </strong>
+            </span>
+
             <button
               type="button"
               onClick={() => setBackupModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
             >
               <DatabaseBackup className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Backup / Restore JSON</span>
@@ -793,13 +833,28 @@ export default function App() {
               onClick={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
               aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-              className="p-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors"
+              className="p-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors shrink-0"
             >
-              {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+              {theme === 'light' ? (
+                <Moon className="w-4 h-4" />
+              ) : (
+                <Sun className="w-4 h-4" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSignOut}
+              title="Sign out"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 dark:hover:bg-rose-950/40 dark:hover:text-rose-300 dark:hover:border-rose-800 transition-colors whitespace-nowrap shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </header>
 
+        {/* Active Module Content */}
         <main className="flex-1 p-4 lg:p-6 max-w-[1600px] w-full mx-auto">
           {!isLoaded ? (
             <div className="space-y-4">

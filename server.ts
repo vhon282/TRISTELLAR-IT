@@ -68,8 +68,8 @@ const SEED_TEAM_STORE: TeamCollabStore = {
     {
       id: 'msg-seed-003',
       channel: 'maintenance-ops',
-      sender: 'Shem',
-      senderRole: 'Field Tech',
+      sender: 'Vhon',
+      senderRole: 'IT Support',
       content:
         'Conchu Core PoE Switch 24-Port cleaned and verified at 58W load. Camera D4 PoE boot reseated, monitoring packet loss.',
       assetCode: '00519-04',
@@ -123,7 +123,7 @@ const SEED_TEAM_STORE: TeamCollabStore = {
       category: 'Incident',
       branchLocation: 'Bacoor',
       assetCode: '00604-05',
-      author: 'Shem',
+      author: 'Vhon',
       pinned: false,
       createdAt: '2026-11-13T11:45:00.000Z',
       updatedAt: '2026-11-13T11:45:00.000Z',

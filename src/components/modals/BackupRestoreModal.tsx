@@ -71,7 +71,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     onResetSeed();
     setConfirmReset(false);
     setErrorMsg('');
-    setStatusMsg('Workspace reset to default IT operations sample dataset.');
+    setStatusMsg('Workspace reset to default TRISTELLAR IT operations dataset.');
   };
 
   return (
@@ -156,10 +156,10 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
           <div className="flex items-center justify-between gap-4 p-4 rounded-lg border border-stone-200 dark:border-stone-800">
             <div>
               <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
-                Reset Sample Dataset
+                Reset Default Dataset
               </h3>
               <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
-                Restore initial demo data across all 5 branches and IT operations hubs.
+                Restore initial IT operations data across all 5 branches and communications hubs.
               </p>
             </div>
             <button

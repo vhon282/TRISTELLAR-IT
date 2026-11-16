@@ -9,7 +9,7 @@ export type OperationalStatus =
   | 'RETIRED';
 
 export type Quarter = 'Q1' | 'Q2' | 'Q3' | 'Q4';
-export type Technician = 'Mac' | 'Francis' | 'Shem';
+export type Technician = 'Mac' | 'Francis' | 'Vhon';
 export type MaintenanceStatus = 'Done' | 'Pending';
 
 export interface Asset {
