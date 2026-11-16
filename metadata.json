@@ -1,0 +1,6 @@
+{
+  "name": "OpsMaint CMMS",
+  "description": "IT Operations, Asset Management & Preventive Maintenance (CMMS) platform for multi-branch equipment tracking, quarterly PM checklists, spare parts procurement, and IT comms directories.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
