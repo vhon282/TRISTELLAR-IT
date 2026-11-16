@@ -59,12 +59,19 @@ import {
 } from './components/modules/CommsDirectoryModule';
 import { TeamNotesModule } from './components/modules/TeamNotesModule';
 import { BackupRestoreModal } from './components/modals/BackupRestoreModal';
+import { OperatorLoginModal } from './components/modals/OperatorLoginModal';
 
 interface NavItem {
   id: ActiveModule;
   label: string;
   icon: React.ReactNode;
 }
+
+const AUTH_USERS: Record<string, string> = {
+  mark: '3Stellar',
+  francis: '3Stellar',
+  vhon: '3Stellar',
+};
 
 const NAV_ITEMS: NavItem[] = [
   {
@@ -117,17 +124,47 @@ export default function App() {
   const searchWrapperRef = useRef<HTMLDivElement | null>(null);
 
   const [backupModalOpen, setBackupModalOpen] = useState(false);
+  const [authUser, setAuthUser] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem('tristellar_auth_user');
+      return saved && saved.trim() ? saved.trim() : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Real-time Team Chat & IT Notes state (server-authoritative via WebSocket)
   const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
   const [itNotes, setItNotes] = useState<ItNote[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlinePresenceUser[]>([]);
   const [wsConnected, setWsConnected] = useState(false);
-  const [operatorName, setOperatorName] = useState<string>(() => loadSavedOperator());
+  const [operatorName, setOperatorName] = useState<string>(() => {
+    const savedName = authUser || loadSavedOperator();
+    return savedName || 'Mac';
+  });
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const clientIdRef = useRef<string>(getOrCreateClientId());
   const activeModuleRef = useRef<ActiveModule>(activeModule);
   const operatorNameRef = useRef<string>(operatorName);
+
+  const handleLogin = (username: string, password: string) => {
+    const userKey = username.trim().toLowerCase();
+    const expectedPassword = AUTH_USERS[userKey];
+    if (!expectedPassword || password !== expectedPassword) {
+      return false;
+    }
+
+    const canonicalName = userKey.charAt(0).toUpperCase() + userKey.slice(1);
+    setAuthUser(canonicalName);
+    setOperatorName(canonicalName);
+    saveOperatorPreference(canonicalName);
+    try {
+      localStorage.setItem('tristellar_auth_user', canonicalName);
+    } catch {
+      // ignore storage errors
+    }
+    return true;
+  };
 
   useEffect(() => {
     activeModuleRef.current = activeModule;
@@ -589,6 +626,17 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100">
+      <OperatorLoginModal
+        isOpen={!authUser}
+        onLogin={(username, password) => {
+          const success = handleLogin(username, password);
+          if (!success) {
+            return false;
+          }
+          return true;
+        }}
+      />
+
       {/* Mobile Sidebar Backdrop */}
       {mobileMenuOpen && (
         <div
@@ -691,7 +739,7 @@ export default function App() {
       {/* Main Content Shell */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Top Bar */}
-        <header className="sticky top-0 z-30 h-14 bg-white/95 dark:bg-stone-900/95 backdrop-blur border-b border-stone-200 dark:border-stone-800 px-4 lg:px-6 flex items-center justify-between gap-4">
+        <header className="sticky top-0 z-30 h-14 bg-white/95 dark:bg-stone-900/95 backdrop-blur border-b border-stone-200 dark:border-stone-800 px-4 lg:px-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <button
               type="button"
@@ -714,7 +762,7 @@ export default function App() {
                   setSearchFocused(true);
                 }}
                 placeholder="Global search: asset code, AnyDesk ID, CCTV IP, callsign, voucher..."
-                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
               />
 
               {searchFocused && globalQuery.trim().length > 0 && (
@@ -763,10 +811,13 @@ export default function App() {
 
           {/* Top Bar Right Controls: Backup/Restore JSON + Theme Toggle */}
           <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 px-2.5 py-1.5 text-[11px] font-medium text-stone-600 dark:text-stone-300">
+              <span className="font-mono text-orange-600 dark:text-orange-400">{operatorName}</span>
+            </div>
             <button
               type="button"
               onClick={() => setBackupModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors"
             >
               <DatabaseBackup className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Backup / Restore JSON</span>
@@ -778,7 +829,7 @@ export default function App() {
               onClick={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
               aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
               title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-              className="p-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors shrink-0"
+              className="p-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors"
             >
               {theme === 'light' ? (
                 <Moon className="w-4 h-4" />
