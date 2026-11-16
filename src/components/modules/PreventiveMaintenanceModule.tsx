@@ -74,6 +74,18 @@ function buildNextSeqNumber(tasks: MaintenanceTask[], quarter: Quarter, year: nu
   return `${year}${qNum}-${String(nextIndex).padStart(2, '0')}`;
 }
 
+function getTaskYear(task: MaintenanceTask): number {
+  return (
+    (Number.isFinite(Number(task.year)) && Number(task.year) > 1990
+      ? Number(task.year)
+      : 0) ||
+    Number((task.scheduledDate || '').slice(0, 4)) ||
+    Number((task.actualDate || '').slice(0, 4)) ||
+    Number((task.seqNumber || '').slice(0, 4)) ||
+    2026
+  );
+}
+
 function ensureFullChecklist(items: MaintenanceChecklistItem[]): MaintenanceChecklistItem[] {
   if (items.length >= 18 && items[0]?.section) {
     return items.map((c) => ({ ...c, remarks: c.remarks ?? '' }));
@@ -98,9 +110,9 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   const [searchQuery, setSearchQuery] = useState(initialSearch);
 
   const yearOptions = useMemo(() => {
-    const years = new Set<number>([2024, 2025, 2026, 2027, 2028, 2029, 2030]);
+    const years = new Set<number>([2024, 2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032]);
     tasks.forEach((t) => {
-      if (t.year) years.add(t.year);
+      years.add(getTaskYear(t));
     });
     return Array.from(years).sort((a, b) => b - a);
   }, [tasks]);
@@ -118,7 +130,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   // Annual Rollover & Reset modal state
   const [isResetOpen, setIsResetOpen] = useState(false);
   const [resetMode, setResetMode] = useState<MaintenanceResetMode>('rollover');
-  const [resetSourceYear, setResetSourceYear] = useState<'ALL' | number>('ALL');
+  const [resetSourceYear, setResetSourceYear] = useState<'ALL' | 'FROM_ASSETS' | number>('ALL');
   const [resetTargetYear, setResetTargetYear] = useState<number>(2027);
   const [resetKeepHistory, setResetKeepHistory] = useState<boolean>(true);
   const [resetAssetDates, setResetAssetDates] = useState<boolean>(false);
@@ -212,7 +224,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
     const q = searchQuery.trim().toLowerCase();
     return tasks.filter((t) => {
       if (quarterFilter !== 'ALL' && t.quarter !== quarterFilter) return false;
-      if (yearFilter !== 'ALL' && t.year !== yearFilter) return false;
+      if (yearFilter !== 'ALL' && getTaskYear(t) !== yearFilter) return false;
       if (techFilter !== 'ALL' && t.technician !== techFilter) return false;
       if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
       if (!q) return true;
@@ -239,7 +251,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   const pendingByQuarter = useMemo(() => {
     const counts: Record<Quarter, number> = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 };
     tasks.forEach((t) => {
-      if (yearFilter !== 'ALL' && t.year !== yearFilter) return;
+      if (yearFilter !== 'ALL' && getTaskYear(t) !== yearFilter) return;
       if (t.status === 'Pending') {
         counts[t.quarter] = (counts[t.quarter] ?? 0) + 1;
       }
@@ -251,7 +263,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
     const keys = new Set<string>();
     tasks.forEach((t) => {
       if (t.status === 'Pending') {
-        keys.add(`${t.year}-${t.quarter}`);
+        keys.add(`${getTaskYear(t)}-${t.quarter}`);
       }
     });
     return keys;
@@ -407,32 +419,44 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
     );
   };
 
-  const existingTaskYears = useMemo(() => {
-    const set = new Set<number>();
+  const taskCountByYear = useMemo(() => {
+    const map = new Map<number, number>();
     tasks.forEach((t) => {
-      if (t.year) set.add(t.year);
+      const y = getTaskYear(t);
+      map.set(y, (map.get(y) ?? 0) + 1);
     });
-    return Array.from(set).sort((a, b) => b - a);
+    return map;
   }, [tasks]);
+
+  const existingTaskYears = useMemo(() => {
+    return Array.from(taskCountByYear.keys()).sort((a, b) => b - a);
+  }, [taskCountByYear]);
 
   const resetImpactCount = useMemo(() => {
     if (resetMode === 'rollover') {
+      if (resetSourceYear === 'FROM_ASSETS') {
+        return assets.length;
+      }
       if (resetSourceYear === 'ALL') {
         const latest =
           existingTaskYears.length > 0 ? existingTaskYears[0] : new Date().getFullYear();
-        return tasks.filter((t) => t.year === latest).length;
+        return tasks.filter((t) => getTaskYear(t) === latest).length;
       }
-      return tasks.filter((t) => t.year === resetSourceYear).length;
+      return tasks.filter((t) => getTaskYear(t) === Number(resetSourceYear)).length;
     }
-    if (resetSourceYear === 'ALL') return tasks.length;
-    return tasks.filter((t) => t.year === resetSourceYear).length;
-  }, [resetMode, resetSourceYear, tasks, existingTaskYears]);
+    if (resetSourceYear === 'ALL' || resetSourceYear === 'FROM_ASSETS') return tasks.length;
+    return tasks.filter((t) => getTaskYear(t) === Number(resetSourceYear)).length;
+  }, [resetMode, resetSourceYear, tasks, assets.length, existingTaskYears]);
 
   const openResetModal = () => {
     const latestYear =
       existingTaskYears.length > 0 ? existingTaskYears[0] : new Date().getFullYear();
     setResetMode('rollover');
-    setResetSourceYear(latestYear);
+    if (tasks.length === 0 && assets.length > 0) {
+      setResetSourceYear('FROM_ASSETS');
+    } else {
+      setResetSourceYear(latestYear);
+    }
     setResetTargetYear(latestYear + 1);
     setResetKeepHistory(true);
     setResetAssetDates(false);
@@ -442,6 +466,8 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
 
   const handleConfirmReset = (e: React.FormEvent) => {
     e.preventDefault();
+    if (resetImpactCount === 0) return;
+
     onResetMaintenance({
       mode: resetMode,
       sourceYear: resetSourceYear,
@@ -450,23 +476,34 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
       resetAssetLastPmDate: resetAssetDates,
     });
 
+    // Clear active filters so newly rolled-over or reset work orders are immediately visible
+    setQuarterFilter('ALL');
+    setTechFilter('ALL');
+    setStatusFilter('ALL');
+    setSearchQuery('');
+
     if (resetMode === 'rollover') {
       setYearFilter(resetTargetYear);
       setCalendarYear(resetTargetYear);
+      setCalendarMonth(0);
       setResetNotice(
         `Rolled over ${resetImpactCount} maintenance work orders into ${resetTargetYear} (all set to Pending with cleared checklists).`
       );
     } else if (resetMode === 'reset-pending') {
       setResetNotice(
         `Reset ${resetImpactCount} maintenance work orders${
-          resetSourceYear === 'ALL' ? '' : ` for ${resetSourceYear}`
+          resetSourceYear === 'ALL' || resetSourceYear === 'FROM_ASSETS'
+            ? ''
+            : ` for ${resetSourceYear}`
         } back to Pending.`
       );
     } else {
       setYearFilter('ALL');
       setResetNotice(
         `Cleared ${resetImpactCount} maintenance records${
-          resetSourceYear === 'ALL' ? ' across all years' : ` for ${resetSourceYear}`
+          resetSourceYear === 'ALL' || resetSourceYear === 'FROM_ASSETS'
+            ? ' across all years'
+            : ` for ${resetSourceYear}`
         }.`
       );
     }
@@ -2009,25 +2046,40 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">
-                {resetMode === 'rollover' ? 'Copy Schedule From Year' : 'Target Year Scope'}
+                {resetMode === 'rollover' ? 'Copy Schedule From' : 'Target Year Scope'}
               </label>
               <select
-                value={resetSourceYear}
-                onChange={(e) =>
-                  setResetSourceYear(
-                    e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
-                  )
-                }
+                value={String(resetSourceYear)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === 'ALL' || v === 'FROM_ASSETS') {
+                    setResetSourceYear(v);
+                  } else {
+                    setResetSourceYear(Number(v));
+                  }
+                }}
                 className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950 text-stone-900 dark:text-stone-100"
               >
                 <option value="ALL">
-                  {resetMode === 'rollover' ? 'Latest Year Schedule' : 'All Years'}
+                  {resetMode === 'rollover'
+                    ? `Latest Year (${existingTaskYears[0] ?? 2026} — ${
+                        taskCountByYear.get(existingTaskYears[0] ?? 2026) ?? 0
+                      } tasks)`
+                    : `All Years (${tasks.length} tasks)`}
                 </option>
-                {yearOptions.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
+                {resetMode === 'rollover' && (
+                  <option value="FROM_ASSETS">
+                    Master Assets ({assets.length} assets → Q1)
                   </option>
-                ))}
+                )}
+                {yearOptions.map((y) => {
+                  const cnt = taskCountByYear.get(y) ?? 0;
+                  return (
+                    <option key={y} value={String(y)}>
+                      {y} ({cnt} {cnt === 1 ? 'task' : 'tasks'})
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -2101,13 +2153,15 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
 
           {/* Impact Summary */}
           <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-stone-100 dark:bg-stone-800 text-xs">
-            <span className="text-stone-600 dark:text-stone-300">Affected Work Orders:</span>
+            <span className="text-stone-600 dark:text-stone-300">
+              {resetMode === 'rollover' ? 'Work Orders to Create:' : 'Affected Work Orders:'}
+            </span>
             <span className="font-mono tabular-nums font-bold text-stone-900 dark:text-stone-100">
               {resetImpactCount} {resetImpactCount === 1 ? 'task' : 'tasks'}
             </span>
           </div>
 
-          {(resetMode === 'clear' || (resetMode === 'rollover' && !resetKeepHistory) || resetMode === 'reset-pending') && (
+          {resetMode === 'clear' && (
             <label className="flex items-center gap-2 text-xs font-medium text-rose-700 dark:text-rose-300 cursor-pointer">
               <input
                 type="checkbox"
@@ -2116,13 +2170,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
                 className="rounded border-rose-400 text-rose-600 focus:ring-rose-500"
               />
               <span>
-                I confirm I want to{' '}
-                {resetMode === 'clear'
-                  ? 'permanently delete'
-                  : resetMode === 'reset-pending'
-                  ? 'reset to Pending'
-                  : 'replace previous maintenance records for'}{' '}
-                the selected scope.
+                I confirm I want to permanently delete the selected maintenance records.
               </span>
             </label>
           )}
@@ -2138,11 +2186,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
             <button
               type="submit"
               disabled={
-                resetImpactCount === 0 ||
-                ((resetMode === 'clear' ||
-                  (resetMode === 'rollover' && !resetKeepHistory) ||
-                  resetMode === 'reset-pending') &&
-                  !resetConfirmed)
+                resetImpactCount === 0 || (resetMode === 'clear' && !resetConfirmed)
               }
               className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg text-white transition-colors disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap ${
                 resetMode === 'clear'

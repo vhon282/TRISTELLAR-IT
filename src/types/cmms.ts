@@ -236,7 +236,7 @@ export type MaintenanceResetMode = 'rollover' | 'reset-pending' | 'clear';
 
 export interface MaintenanceResetPayload {
   mode: MaintenanceResetMode;
-  sourceYear: 'ALL' | number;
+  sourceYear: 'ALL' | 'FROM_ASSETS' | number;
   targetYear: number;
   keepHistory: boolean;
   resetAssetLastPmDate: boolean;

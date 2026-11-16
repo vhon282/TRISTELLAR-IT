@@ -63,9 +63,26 @@ function normalizeTask(task: MaintenanceTask, idx: number): MaintenanceTask {
         remarks: '',
       }));
 
+  const parsedYear =
+    (Number.isFinite(Number(task.year)) && Number(task.year) > 1990 ? Number(task.year) : 0) ||
+    Number((task.scheduledDate || '').slice(0, 4)) ||
+    Number((task.actualDate || '').slice(0, 4)) ||
+    Number((task.seqNumber || '').slice(0, 4)) ||
+    2026;
+
+  const validQuarter =
+    task.quarter === 'Q1' ||
+    task.quarter === 'Q2' ||
+    task.quarter === 'Q3' ||
+    task.quarter === 'Q4'
+      ? task.quarter
+      : 'Q4';
+
   return {
     ...task,
-    seqNumber: task.seqNumber || `20264TH-${String(idx + 1).padStart(2, '0')}`,
+    year: parsedYear,
+    quarter: validQuarter,
+    seqNumber: task.seqNumber || `${parsedYear}4TH-${String(idx + 1).padStart(2, '0')}`,
     formCode: task.formCode || 'INF-SUP-PRMC-2025 / SUP-PRMC-2022-00',
     checklistItems,
   };

@@ -450,6 +450,13 @@ export default function App() {
   };
 
   const handleResetMaintenance = (payload: MaintenanceResetPayload) => {
+    const getTaskYear = (t: MaintenanceTask): number =>
+      (Number.isFinite(Number(t.year)) && Number(t.year) > 1990 ? Number(t.year) : 0) ||
+      Number((t.scheduledDate || '').slice(0, 4)) ||
+      Number((t.actualDate || '').slice(0, 4)) ||
+      Number((t.seqNumber || '').slice(0, 4)) ||
+      2026;
+
     const shiftYearInDate = (dateStr: string, targetYear: number): string => {
       if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         return `${targetYear}-01-15`;
@@ -471,16 +478,23 @@ export default function App() {
 
       if (payload.mode === 'clear') {
         nextTasks =
-          payload.sourceYear === 'ALL'
+          payload.sourceYear === 'ALL' || payload.sourceYear === 'FROM_ASSETS'
             ? []
-            : prev.maintenanceTasks.filter((t) => t.year !== payload.sourceYear);
+            : prev.maintenanceTasks.filter(
+                (t) => getTaskYear(t) !== Number(payload.sourceYear)
+              );
       } else if (payload.mode === 'reset-pending') {
         nextTasks = prev.maintenanceTasks.map((t) => {
-          if (payload.sourceYear !== 'ALL' && t.year !== payload.sourceYear) {
+          if (
+            payload.sourceYear !== 'ALL' &&
+            payload.sourceYear !== 'FROM_ASSETS' &&
+            getTaskYear(t) !== Number(payload.sourceYear)
+          ) {
             return t;
           }
           return {
             ...t,
+            year: getTaskYear(t),
             actualDate: '',
             status: 'Pending',
             remarks: '',
@@ -492,34 +506,68 @@ export default function App() {
           };
         });
       } else if (payload.mode === 'rollover') {
-        let sourcePool: MaintenanceTask[];
-        if (payload.sourceYear === 'ALL') {
-          const years = prev.maintenanceTasks.map((t) => t.year).filter(Boolean);
-          const latestYear = years.length > 0 ? Math.max(...years) : new Date().getFullYear();
-          sourcePool = prev.maintenanceTasks.filter((t) => t.year === latestYear);
-        } else {
-          sourcePool = prev.maintenanceTasks.filter((t) => t.year === payload.sourceYear);
-        }
+        let clonedForTarget: MaintenanceTask[] = [];
 
-        const clonedForTarget: MaintenanceTask[] = sourcePool.map((t, idx) => ({
-          ...t,
-          id: generateUid('pm'),
-          year: payload.targetYear,
-          seqNumber: `${payload.targetYear}${quarterLabel(t.quarter)}-${String(idx + 1).padStart(2, '0')}`,
-          scheduledDate: shiftYearInDate(t.scheduledDate, payload.targetYear),
-          actualDate: '',
-          status: 'Pending',
-          remarks: '',
-          checklistItems: DEFAULT_CHECKLIST.map((c) => ({
-            ...c,
-            checked: false,
+        if (payload.sourceYear === 'FROM_ASSETS') {
+          clonedForTarget = prev.assets.map((asset, idx) => ({
+            id: generateUid('pm'),
+            assetId: asset.id,
+            assetCode: asset.assetCode,
+            equipmentName: asset.equipmentName,
+            branchLocation: asset.branchLocation,
+            seqNumber: `${payload.targetYear}1ST-${String(idx + 1).padStart(2, '0')}`,
+            formCode: 'INF-SUP-PRMC-2025 / SUP-PRMC-2022-00',
+            description: `${asset.brand} ${asset.model}`.trim() || asset.equipmentName,
+            incharge: asset.assignedTo || '',
+            position: '',
+            department: '',
+            quarter: 'Q1',
+            year: payload.targetYear,
+            technician: 'Mac',
+            scheduledDate: `${payload.targetYear}-01-15`,
+            actualDate: '',
+            status: 'Pending',
+            checklistItems: DEFAULT_CHECKLIST.map((c) => ({
+              ...c,
+              checked: false,
+              remarks: '',
+            })),
             remarks: '',
-          })),
-        }));
+            resultCondition: asset.condition,
+            setAssetStatusTo: asset.operationalStatus,
+          }));
+        } else {
+          let sourcePool: MaintenanceTask[];
+          if (payload.sourceYear === 'ALL') {
+            const years = prev.maintenanceTasks.map(getTaskYear);
+            const latestYear = years.length > 0 ? Math.max(...years) : new Date().getFullYear();
+            sourcePool = prev.maintenanceTasks.filter((t) => getTaskYear(t) === latestYear);
+          } else {
+            sourcePool = prev.maintenanceTasks.filter(
+              (t) => getTaskYear(t) === Number(payload.sourceYear)
+            );
+          }
+
+          clonedForTarget = sourcePool.map((t, idx) => ({
+            ...t,
+            id: generateUid('pm'),
+            year: payload.targetYear,
+            seqNumber: `${payload.targetYear}${quarterLabel(t.quarter)}-${String(idx + 1).padStart(2, '0')}`,
+            scheduledDate: shiftYearInDate(t.scheduledDate, payload.targetYear),
+            actualDate: '',
+            status: 'Pending',
+            remarks: '',
+            checklistItems: DEFAULT_CHECKLIST.map((c) => ({
+              ...c,
+              checked: false,
+              remarks: '',
+            })),
+          }));
+        }
 
         if (payload.keepHistory) {
           const retained = prev.maintenanceTasks.filter(
-            (t) => t.year !== payload.targetYear
+            (t) => getTaskYear(t) !== Number(payload.targetYear)
           );
           nextTasks = [...clonedForTarget, ...retained];
         } else {
