@@ -6,7 +6,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/opsmaint-cmms/', // <-- Replace with your exact GitHub repository name
+    base: '/TRISTELLAR-IT/',
     plugins: [
       react(),
       tailwindcss(),
