@@ -35,37 +35,46 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     onLoginSuccess(user);
   };
 
-  return (
-    <div className="min-h-screen flex flex-col justify-center items-center p-4 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 relative">
-      <button
-        type="button"
-        onClick={onToggleTheme}
-        aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-        className="fixed top-4 right-4 p-2.5 rounded-lg border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
-      >
-        {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
-      </button>
+  const logoUrl = `${import.meta.env.BASE_URL}assets/aistudio/TTC.Logo.Tagline_MKT_Ver7824_3b47c9b8.png`;
 
-      <div className="w-full max-w-md bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-orange-600 text-white flex items-center justify-center font-display font-bold text-sm tracking-tight shrink-0">
-            TS
+  return (
+    <div className="min-h-[100dvh] w-full overflow-y-auto overflow-x-hidden flex flex-col items-center px-4 py-6 sm:p-6 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100">
+      <div className="w-full max-w-md my-auto bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-2xl p-5 sm:p-8 shadow-sm space-y-5 sm:space-y-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-2 min-w-0">
+            <div className="inline-flex items-center rounded-lg bg-white px-2 py-1 dark:bg-white/95">
+              <img
+                src={logoUrl}
+                alt="TriStellar — Bigas ng Bayan"
+                className="h-9 sm:h-11 w-auto max-w-[210px] object-contain"
+              />
+            </div>
+            <div className="min-w-0">
+              <h1 className="font-display font-bold text-sm sm:text-base tracking-tight text-stone-900 dark:text-stone-100 truncate">
+                TRISTELLAR IT DEPT.
+              </h1>
+              <p className="text-xs text-stone-500 dark:text-stone-400 leading-snug">
+                IT Operations, Assets &amp; Preventive Maintenance
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-display font-bold text-lg tracking-tight text-stone-900 dark:text-stone-100">
-              TRISTELLAR IT DEPT.
-            </h1>
-            <p className="text-xs text-stone-500 dark:text-stone-400">
-              IT Operations, Assets &amp; Preventive Maintenance
-            </p>
-          </div>
+
+          <button
+            type="button"
+            onClick={onToggleTheme}
+            aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+            title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+            className="p-2.5 rounded-lg border border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-950 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors shrink-0"
+          >
+            {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+          </button>
         </div>
 
         <div className="space-y-1">
           <h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
             Operator Sign In
           </h2>
-          <p className="text-xs text-stone-500 dark:text-stone-400">
+          <p className="text-xs text-stone-500 dark:text-stone-400 leading-relaxed">
             Sign in with your IT department account to manage assets, PM schedules, vouchers, and team notes.
           </p>
         </div>
@@ -86,7 +95,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     setUsername(op.username);
                     setErrorMsg('');
                   }}
-                  className={`py-2 px-3 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+                  className={`min-h-[44px] sm:min-h-0 py-2 px-2 sm:px-3 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
                     active
                       ? 'bg-orange-600 text-white border-orange-600'
                       : 'bg-stone-50 dark:bg-stone-950 text-stone-700 dark:text-stone-300 border-stone-200 dark:border-stone-800 hover:border-orange-400'
@@ -114,13 +123,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 type="text"
                 required
                 autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                enterKeyHint="next"
                 value={username}
                 onChange={(e) => {
                   setUsername(e.target.value);
                   setErrorMsg('');
                 }}
                 placeholder="mac, francis, or vhon"
-                className="w-full pl-9 pr-3 py-2.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+                className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
               />
             </div>
           </div>
@@ -139,19 +151,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 type={showPassword ? 'text' : 'password'}
                 required
                 autoComplete="current-password"
+                enterKeyHint="done"
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setErrorMsg('');
                 }}
                 placeholder="Enter password"
-                className="w-full pl-9 pr-10 py-2.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
+                className="w-full pl-9 pr-11 py-2.5 text-base sm:text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/40"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((s) => !s)}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -167,7 +180,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
           <button
             type="submit"
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap"
+            className="w-full min-h-[44px] sm:min-h-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm sm:text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap"
           >
             <LogIn className="w-4 h-4" />
             <span>Sign In to CMMS</span>

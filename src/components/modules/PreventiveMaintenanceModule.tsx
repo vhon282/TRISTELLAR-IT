@@ -1329,14 +1329,21 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
             {/* Warm Peach Header Banner */}
             <div className="bg-gradient-to-r from-[#f6cbb0] to-[#fde8d7] dark:from-orange-950/80 dark:to-stone-900 border-b border-stone-900 dark:border-stone-600 px-4 py-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-extrabold tracking-wider text-orange-900 dark:text-orange-300 uppercase">
-                  TRISTELLAR IT DEPT.
-                </span>
+                <div className="flex items-center gap-2.5">
+                  <img
+                    src={`${import.meta.env.BASE_URL}assets/aistudio/TTC.Logo.Tagline_MKT_Ver7824_3b47c9b8.png`}
+                    alt="TriStellar"
+                    className="h-7 w-auto object-contain rounded bg-white/85 px-1.5 py-0.5"
+                  />
+                  <span className="text-xs font-extrabold tracking-wider text-orange-900 dark:text-orange-300 uppercase">
+                    TRISTELLAR IT DEPT.
+                  </span>
+                </div>
                 <span className="text-[11px] font-mono font-semibold text-stone-800 dark:text-stone-200">
                   {newForm.quarter} · {newForm.year}
                 </span>
               </div>
-              <h3 className="text-center text-base sm:text-lg font-extrabold tracking-wide text-stone-950 dark:text-orange-100 mt-0.5">
+              <h3 className="text-center text-base sm:text-lg font-extrabold tracking-wide text-stone-950 dark:text-orange-100 mt-1">
                 PREVENTIVE MAINTENANCE CHECKLIST
               </h3>
             </div>
@@ -1788,11 +1795,18 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
             id="printable-pm-form"
             className="bg-white text-stone-900 border-2 border-stone-900 text-xs"
           >
-            <div className="bg-gradient-to-r from-[#f6cbb0] to-[#fde8d7] border-b border-stone-900 px-4 py-2.5 text-center">
-              <p className="text-xs font-bold tracking-wider text-orange-900">
-                TRISTELLAR IT DEPT.
-              </p>
-              <h3 className="text-base font-extrabold tracking-wide text-stone-950">
+            <div className="bg-gradient-to-r from-[#f6cbb0] to-[#fde8d7] border-b border-stone-900 px-4 py-2.5">
+              <div className="flex items-center justify-center gap-2.5 mb-1">
+                <img
+                  src={`${import.meta.env.BASE_URL}assets/aistudio/TTC.Logo.Tagline_MKT_Ver7824_3b47c9b8.png`}
+                  alt="TriStellar"
+                  className="h-7 w-auto object-contain"
+                />
+                <p className="text-xs font-bold tracking-wider text-orange-900">
+                  TRISTELLAR IT DEPT.
+                </p>
+              </div>
+              <h3 className="text-base font-extrabold tracking-wide text-stone-950 text-center">
                 PREVENTIVE MAINTENANCE CHECKLIST
               </h3>
             </div>
