@@ -117,14 +117,21 @@ export const AssetRegistryModule: React.FC<AssetRegistryModuleProps> = ({
     });
   }, [assets, searchQuery, branchFilter, categoryFilter, statusFilter, conditionFilter]);
 
+  const latestTaskYear = useMemo(() => {
+    const years = maintenanceTasks.map((t) => t.year).filter(Boolean);
+    return years.length > 0 ? Math.max(...years) : null;
+  }, [maintenanceTasks]);
+
   const tasksByAssetAndQuarter = useMemo(() => {
     const map = new Map<string, Record<Quarter, MaintenanceTask | undefined>>();
     for (const asset of assets) {
-      const matching = maintenanceTasks.filter(
-        (t) =>
-          t.assetId === asset.id ||
-          (asset.assetCode && t.assetCode.toLowerCase() === asset.assetCode.toLowerCase())
-      );
+      const matching = maintenanceTasks
+        .filter(
+          (t) =>
+            t.assetId === asset.id ||
+            (asset.assetCode && t.assetCode.toLowerCase() === asset.assetCode.toLowerCase())
+        )
+        .sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
       map.set(asset.id, {
         Q1: matching.find((t) => t.quarter === 'Q1'),
         Q2: matching.find((t) => t.quarter === 'Q2'),
@@ -610,7 +617,10 @@ export const AssetRegistryModule: React.FC<AssetRegistryModuleProps> = ({
                     <th className="px-4 py-3 whitespace-nowrap">Status</th>
                     {QUARTERS.map((q) => {
                       const hasPending = maintenanceTasks.some(
-                        (t) => t.quarter === q && t.status === 'Pending'
+                        (t) =>
+                          t.quarter === q &&
+                          t.status === 'Pending' &&
+                          (latestTaskYear === null || t.year === latestTaskYear)
                       );
                       return (
                         <th

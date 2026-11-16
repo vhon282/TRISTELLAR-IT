@@ -12,12 +12,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Printer,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 import {
   Asset,
   AssetCondition,
   ChecklistSection,
   MaintenanceChecklistItem,
+  MaintenanceResetMode,
+  MaintenanceResetPayload,
   MaintenanceStatus,
   MaintenanceTask,
   OperationalStatus,
@@ -44,6 +50,7 @@ interface PreventiveMaintenanceModuleProps {
   onSaveTask: (task: MaintenanceTask, updateParentAsset: boolean) => void;
   onDeleteTask: (taskId: string) => void;
   onBulkImportTasks: (tasks: MaintenanceTask[]) => void;
+  onResetMaintenance: (payload: MaintenanceResetPayload) => void;
 }
 
 function quarterFromDate(dateStr: string): Quarter {
@@ -81,6 +88,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   onSaveTask,
   onDeleteTask,
   onBulkImportTasks,
+  onResetMaintenance,
 }) => {
   const [viewMode, setViewMode] = useState<'table' | 'calendar'>('table');
   const [quarterFilter, setQuarterFilter] = useState<'ALL' | Quarter>('ALL');
@@ -90,7 +98,7 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   const [searchQuery, setSearchQuery] = useState(initialSearch);
 
   const yearOptions = useMemo(() => {
-    const years = new Set<number>([2024, 2025, 2026, 2027, 2028]);
+    const years = new Set<number>([2024, 2025, 2026, 2027, 2028, 2029, 2030]);
     tasks.forEach((t) => {
       if (t.year) years.add(t.year);
     });
@@ -106,6 +114,16 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   const [isNewOpen, setIsNewOpen] = useState(false);
   const [isCsvOpen, setIsCsvOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Annual Rollover & Reset modal state
+  const [isResetOpen, setIsResetOpen] = useState(false);
+  const [resetMode, setResetMode] = useState<MaintenanceResetMode>('rollover');
+  const [resetSourceYear, setResetSourceYear] = useState<'ALL' | number>('ALL');
+  const [resetTargetYear, setResetTargetYear] = useState<number>(2027);
+  const [resetKeepHistory, setResetKeepHistory] = useState<boolean>(true);
+  const [resetAssetDates, setResetAssetDates] = useState<boolean>(false);
+  const [resetConfirmed, setResetConfirmed] = useState<boolean>(false);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
 
   // Sync external search (e.g., jumping from Asset Schedule View)
   React.useEffect(() => {
@@ -389,6 +407,73 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
     );
   };
 
+  const existingTaskYears = useMemo(() => {
+    const set = new Set<number>();
+    tasks.forEach((t) => {
+      if (t.year) set.add(t.year);
+    });
+    return Array.from(set).sort((a, b) => b - a);
+  }, [tasks]);
+
+  const resetImpactCount = useMemo(() => {
+    if (resetMode === 'rollover') {
+      if (resetSourceYear === 'ALL') {
+        const latest =
+          existingTaskYears.length > 0 ? existingTaskYears[0] : new Date().getFullYear();
+        return tasks.filter((t) => t.year === latest).length;
+      }
+      return tasks.filter((t) => t.year === resetSourceYear).length;
+    }
+    if (resetSourceYear === 'ALL') return tasks.length;
+    return tasks.filter((t) => t.year === resetSourceYear).length;
+  }, [resetMode, resetSourceYear, tasks, existingTaskYears]);
+
+  const openResetModal = () => {
+    const latestYear =
+      existingTaskYears.length > 0 ? existingTaskYears[0] : new Date().getFullYear();
+    setResetMode('rollover');
+    setResetSourceYear(latestYear);
+    setResetTargetYear(latestYear + 1);
+    setResetKeepHistory(true);
+    setResetAssetDates(false);
+    setResetConfirmed(false);
+    setIsResetOpen(true);
+  };
+
+  const handleConfirmReset = (e: React.FormEvent) => {
+    e.preventDefault();
+    onResetMaintenance({
+      mode: resetMode,
+      sourceYear: resetSourceYear,
+      targetYear: resetTargetYear,
+      keepHistory: resetKeepHistory,
+      resetAssetLastPmDate: resetAssetDates,
+    });
+
+    if (resetMode === 'rollover') {
+      setYearFilter(resetTargetYear);
+      setCalendarYear(resetTargetYear);
+      setResetNotice(
+        `Rolled over ${resetImpactCount} maintenance work orders into ${resetTargetYear} (all set to Pending with cleared checklists).`
+      );
+    } else if (resetMode === 'reset-pending') {
+      setResetNotice(
+        `Reset ${resetImpactCount} maintenance work orders${
+          resetSourceYear === 'ALL' ? '' : ` for ${resetSourceYear}`
+        } back to Pending.`
+      );
+    } else {
+      setYearFilter('ALL');
+      setResetNotice(
+        `Cleared ${resetImpactCount} maintenance records${
+          resetSourceYear === 'ALL' ? ' across all years' : ` for ${resetSourceYear}`
+        }.`
+      );
+    }
+
+    setIsResetOpen(false);
+  };
+
   const handleImportCsv = (rows: Record<string, string>[]) => {
     const imported: MaintenanceTask[] = rows.map((row, idx) => {
       const assetCode = pickField(row, ['Asset Code', 'Code', 'Asset Tag']);
@@ -634,6 +719,15 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
 
           <button
             type="button"
+            onClick={openResetModal}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-rose-200 dark:border-rose-900/70 bg-white dark:bg-stone-900 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors whitespace-nowrap shrink-0"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset / Rollover Year</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => openNewWorkOrderModal()}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap shrink-0"
           >
@@ -642,6 +736,23 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
           </button>
         </div>
       </div>
+
+      {resetNotice && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/90 dark:bg-emerald-950/40 text-xs text-emerald-900 dark:text-emerald-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="font-medium">{resetNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setResetNotice(null)}
+            aria-label="Dismiss notice"
+            className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/50"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Filter Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800">
@@ -1790,6 +1901,267 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
         ]}
         onImportRows={handleImportCsv}
       />
+
+      {/* Annual Rollover & Reset Maintenance Modal */}
+      <Modal
+        isOpen={isResetOpen}
+        onClose={() => setIsResetOpen(false)}
+        title="Reset & Annual Maintenance Rollover"
+        subtitle="Prepare next year's preventive maintenance cycle or reset current PM schedules."
+        maxWidthClass="max-w-xl"
+      >
+        <form onSubmit={handleConfirmReset} className="space-y-4">
+          {/* Pre-Reset CSV Backup Strip */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg border border-amber-200 dark:border-amber-800/80 bg-amber-50/70 dark:bg-amber-950/30">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-950 dark:text-amber-200">
+                <p className="font-semibold">Recommended: Export a backup first</p>
+                <p className="text-[11px] opacity-85 mt-0.5">
+                  Save your completed PM logs as CSV before resetting or replacing records.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleExportQuarterlyReport}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-stone-900 text-amber-900 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-900/40 whitespace-nowrap shrink-0"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Current CSV</span>
+            </button>
+          </div>
+
+          {/* Mode Selection */}
+          <div className="space-y-2">
+            <span className="block text-xs font-semibold text-stone-700 dark:text-stone-300">
+              Select Reset Action
+            </span>
+            <div className="grid grid-cols-1 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setResetMode('rollover');
+                  setResetConfirmed(false);
+                }}
+                className={`text-left p-3 rounded-lg border transition-colors ${
+                  resetMode === 'rollover'
+                    ? 'border-orange-500 bg-orange-50/70 dark:bg-orange-950/30 dark:border-orange-600'
+                    : 'border-stone-200 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800/40'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-stone-900 dark:text-stone-100">
+                    Roll Over Schedule to New Year
+                  </span>
+                  <span className="text-[10px] font-semibold text-orange-700 dark:text-orange-300">
+                    Recommended for Next Year
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1">
+                  Copies asset &amp; technician assignments into the target year with all tasks set to Pending and blank checklists.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setResetMode('reset-pending');
+                  setResetConfirmed(false);
+                }}
+                className={`text-left p-3 rounded-lg border transition-colors ${
+                  resetMode === 'reset-pending'
+                    ? 'border-orange-500 bg-orange-50/70 dark:bg-orange-950/30 dark:border-orange-600'
+                    : 'border-stone-200 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800/40'
+                }`}
+              >
+                <span className="text-xs font-bold text-stone-900 dark:text-stone-100">
+                  Reset Existing Tasks to Pending
+                </span>
+                <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1">
+                  Keeps current work orders in place, clears actual completion dates &amp; remarks, and unchecks all 18 checklist steps.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setResetMode('clear');
+                  setResetConfirmed(false);
+                }}
+                className={`text-left p-3 rounded-lg border transition-colors ${
+                  resetMode === 'clear'
+                    ? 'border-rose-500 bg-rose-50/70 dark:bg-rose-950/30 dark:border-rose-700'
+                    : 'border-stone-200 dark:border-stone-800 hover:bg-stone-50 dark:hover:bg-stone-800/40'
+                }`}
+              >
+                <span className="text-xs font-bold text-rose-700 dark:text-rose-300">
+                  Clear Maintenance Data (Blank Slate)
+                </span>
+                <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1">
+                  Deletes maintenance work orders for the selected year (or all years) so you can start fresh or import a new CSV.
+                </p>
+              </button>
+            </div>
+          </div>
+
+          {/* Year Controls */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">
+                {resetMode === 'rollover' ? 'Copy Schedule From Year' : 'Target Year Scope'}
+              </label>
+              <select
+                value={resetSourceYear}
+                onChange={(e) =>
+                  setResetSourceYear(
+                    e.target.value === 'ALL' ? 'ALL' : Number(e.target.value)
+                  )
+                }
+                className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950 text-stone-900 dark:text-stone-100"
+              >
+                <option value="ALL">
+                  {resetMode === 'rollover' ? 'Latest Year Schedule' : 'All Years'}
+                </option>
+                {yearOptions.map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {resetMode === 'rollover' && (
+              <div>
+                <label className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1">
+                  New Maintenance Year
+                </label>
+                <select
+                  value={resetTargetYear}
+                  onChange={(e) => setResetTargetYear(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-950 text-stone-900 dark:text-stone-100"
+                >
+                  {[2026, 2027, 2028, 2029, 2030, 2031, 2032].map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Additional Options */}
+          <div className="space-y-2.5 p-3 rounded-lg bg-stone-50 dark:bg-stone-800/40 border border-stone-200 dark:border-stone-800">
+            {resetMode === 'rollover' && (
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 text-xs text-stone-800 dark:text-stone-200 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rolloverHistoryMode"
+                    checked={resetKeepHistory}
+                    onChange={() => setResetKeepHistory(true)}
+                    className="mt-0.5 text-orange-600 focus:ring-orange-500"
+                  />
+                  <span>
+                    <strong className="font-semibold">Keep past year records as archive</strong>
+                    <span className="block text-[11px] text-stone-500 dark:text-stone-400">
+                      Adds fresh {resetTargetYear} Pending work orders while preserving prior years in the Year dropdown.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-xs text-stone-800 dark:text-stone-200 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="rolloverHistoryMode"
+                    checked={!resetKeepHistory}
+                    onChange={() => setResetKeepHistory(false)}
+                    className="mt-0.5 text-orange-600 focus:ring-orange-500"
+                  />
+                  <span>
+                    <strong className="font-semibold">Replace all prior maintenance data</strong>
+                    <span className="block text-[11px] text-stone-500 dark:text-stone-400">
+                      Removes old year logs and starts completely fresh with only {resetTargetYear} Pending tasks.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 text-xs text-stone-700 dark:text-stone-300 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={resetAssetDates}
+                onChange={(e) => setResetAssetDates(e.target.checked)}
+                className="rounded border-stone-300 text-orange-600 focus:ring-orange-500"
+              />
+              <span>Also clear &ldquo;Last Maintenance Date&rdquo; on Master Assets</span>
+            </label>
+          </div>
+
+          {/* Impact Summary */}
+          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-stone-100 dark:bg-stone-800 text-xs">
+            <span className="text-stone-600 dark:text-stone-300">Affected Work Orders:</span>
+            <span className="font-mono tabular-nums font-bold text-stone-900 dark:text-stone-100">
+              {resetImpactCount} {resetImpactCount === 1 ? 'task' : 'tasks'}
+            </span>
+          </div>
+
+          {(resetMode === 'clear' || (resetMode === 'rollover' && !resetKeepHistory) || resetMode === 'reset-pending') && (
+            <label className="flex items-center gap-2 text-xs font-medium text-rose-700 dark:text-rose-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={resetConfirmed}
+                onChange={(e) => setResetConfirmed(e.target.checked)}
+                className="rounded border-rose-400 text-rose-600 focus:ring-rose-500"
+              />
+              <span>
+                I confirm I want to{' '}
+                {resetMode === 'clear'
+                  ? 'permanently delete'
+                  : resetMode === 'reset-pending'
+                  ? 'reset to Pending'
+                  : 'replace previous maintenance records for'}{' '}
+                the selected scope.
+              </span>
+            </label>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-200 dark:border-stone-800">
+            <button
+              type="button"
+              onClick={() => setIsResetOpen(false)}
+              className="px-4 py-2 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={
+                resetImpactCount === 0 ||
+                ((resetMode === 'clear' ||
+                  (resetMode === 'rollover' && !resetKeepHistory) ||
+                  resetMode === 'reset-pending') &&
+                  !resetConfirmed)
+              }
+              className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg text-white transition-colors disabled:opacity-45 disabled:cursor-not-allowed whitespace-nowrap ${
+                resetMode === 'clear'
+                  ? 'bg-rose-600 hover:bg-rose-700'
+                  : 'bg-orange-600 hover:bg-orange-700'
+              }`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>
+                {resetMode === 'rollover'
+                  ? `Roll Over to ${resetTargetYear}`
+                  : resetMode === 'reset-pending'
+                  ? 'Reset Tasks to Pending'
+                  : 'Clear Maintenance Data'}
+              </span>
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 };

@@ -158,6 +158,49 @@ export interface WifiVoucher {
   status: VoucherStatus;
 }
 
+export type ChatChannel =
+  | 'general-it'
+  | 'branch-support'
+  | 'maintenance-ops'
+  | 'parts-procurement';
+
+export interface TeamChatMessage {
+  id: string;
+  channel: ChatChannel;
+  sender: string;
+  senderRole?: string;
+  content: string;
+  assetCode?: string;
+  branchLocation?: string;
+  createdAt: string;
+}
+
+export type NoteCategory =
+  | 'Handover'
+  | 'Runbook'
+  | 'Incident'
+  | 'Maintenance'
+  | 'Config';
+
+export interface ItNote {
+  id: string;
+  title: string;
+  content: string;
+  category: NoteCategory;
+  branchLocation: string;
+  assetCode?: string;
+  author: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OnlinePresenceUser {
+  clientId: string;
+  userName: string;
+  role: string;
+}
+
 export interface CmmsDatabase {
   version: number;
   updatedAt: string;
@@ -177,7 +220,8 @@ export type ActiveModule =
   | 'assets'
   | 'maintenance'
   | 'parts'
-  | 'comms';
+  | 'comms'
+  | 'team';
 
 export interface GlobalSearchResult {
   id: string;
@@ -186,4 +230,14 @@ export interface GlobalSearchResult {
   title: string;
   subtitle: string;
   code?: string;
+}
+
+export type MaintenanceResetMode = 'rollover' | 'reset-pending' | 'clear';
+
+export interface MaintenanceResetPayload {
+  mode: MaintenanceResetMode;
+  sourceYear: 'ALL' | number;
+  targetYear: number;
+  keepHistory: boolean;
+  resetAssetLastPmDate: boolean;
 }

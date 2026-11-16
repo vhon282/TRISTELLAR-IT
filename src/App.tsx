@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   ArrowRight,
+  MessageSquareText,
 } from 'lucide-react';
 import {
   ActiveModule,
@@ -23,18 +24,31 @@ import {
   CmmsDatabase,
   DisposalKeepItem,
   GlobalSearchResult,
+  ItNote,
+  MaintenanceResetPayload,
   MaintenanceTask,
+  OnlinePresenceUser,
   RadioEntry,
   SparePartRequest,
+  TeamChatMessage,
   WifiAuthorizedDevice,
   WifiVoucher,
 } from './types/cmms';
-import { SEED_DATABASE } from './data/seedData';
+import { DEFAULT_CHECKLIST, SEED_DATABASE } from './data/seedData';
+import { generateUid } from './utils/csv';
 import {
   loadThemePreference,
   saveThemePreference,
   storageAdapter,
 } from './services/storageAdapter';
+import {
+  getOrCreateClientId,
+  loadSavedOperator,
+  mergeChatMessage,
+  mergeItNote,
+  saveOperatorPreference,
+  teamSocket,
+} from './services/teamSocket';
 import { ExecutiveDashboard } from './components/modules/ExecutiveDashboard';
 import { AssetRegistryModule } from './components/modules/AssetRegistryModule';
 import { PreventiveMaintenanceModule } from './components/modules/PreventiveMaintenanceModule';
@@ -43,6 +57,7 @@ import {
   CommsDirectoryModule,
   CommsSubTab,
 } from './components/modules/CommsDirectoryModule';
+import { TeamNotesModule } from './components/modules/TeamNotesModule';
 import { BackupRestoreModal } from './components/modals/BackupRestoreModal';
 
 interface NavItem {
@@ -77,6 +92,11 @@ const NAV_ITEMS: NavItem[] = [
     label: 'IT Comms Hub',
     icon: <RadioTower className="w-4 h-4 shrink-0" />,
   },
+  {
+    id: 'team',
+    label: 'Team Chat & Notes',
+    icon: <MessageSquareText className="w-4 h-4 shrink-0" />,
+  },
 ];
 
 export default function App() {
@@ -98,12 +118,91 @@ export default function App() {
 
   const [backupModalOpen, setBackupModalOpen] = useState(false);
 
-  // Load persisted data on mount
+  // Real-time Team Chat & IT Notes state (server-authoritative via WebSocket)
+  const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
+  const [itNotes, setItNotes] = useState<ItNote[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<OnlinePresenceUser[]>([]);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [operatorName, setOperatorName] = useState<string>(() => loadSavedOperator());
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const clientIdRef = useRef<string>(getOrCreateClientId());
+  const activeModuleRef = useRef<ActiveModule>(activeModule);
+  const operatorNameRef = useRef<string>(operatorName);
+
+  useEffect(() => {
+    activeModuleRef.current = activeModule;
+    if (activeModule === 'team') {
+      setUnreadChatCount(0);
+    }
+  }, [activeModule]);
+
+  useEffect(() => {
+    operatorNameRef.current = operatorName;
+    saveOperatorPreference(operatorName);
+    teamSocket.announcePresence({
+      clientId: clientIdRef.current,
+      userName: operatorName,
+      role: 'TRISTELLAR IT',
+    });
+  }, [operatorName]);
+
+  // Load persisted CMMS data + initial Team Chat/Notes REST hydration + WebSocket subscription
   useEffect(() => {
     storageAdapter.load().then((loaded) => {
       setDb(loaded);
       setIsLoaded(true);
     });
+
+    fetch('/api/team/state')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (Array.isArray(data.messages)) setTeamMessages(data.messages);
+        if (Array.isArray(data.notes)) setItNotes(data.notes);
+        if (Array.isArray(data.onlineUsers)) setOnlineUsers(data.onlineUsers);
+      })
+      .catch(() => undefined);
+
+    const unsubStatus = teamSocket.onStatus((connected) => {
+      setWsConnected(connected);
+    });
+
+    const unsubEvents = teamSocket.onEvent((event) => {
+      if (event.type === 'team:init') {
+        setTeamMessages(event.messages);
+        setItNotes(event.notes);
+        setOnlineUsers(event.onlineUsers);
+      } else if (event.type === 'presence:update') {
+        setOnlineUsers(event.onlineUsers);
+      } else if (event.type === 'chat:created') {
+        setTeamMessages((prev) => mergeChatMessage(prev, event.message));
+        if (
+          activeModuleRef.current !== 'team' &&
+          event.message.sender.toLowerCase() !==
+            operatorNameRef.current.trim().toLowerCase()
+        ) {
+          setUnreadChatCount((c) => c + 1);
+        }
+      } else if (event.type === 'chat:deleted') {
+        setTeamMessages((prev) => prev.filter((m) => m.id !== event.id));
+      } else if (event.type === 'note:upserted') {
+        setItNotes((prev) => mergeItNote(prev, event.note));
+      } else if (event.type === 'note:deleted') {
+        setItNotes((prev) => prev.filter((n) => n.id !== event.id));
+      }
+    });
+
+    teamSocket.connect({
+      clientId: clientIdRef.current,
+      userName: operatorNameRef.current,
+      role: 'TRISTELLAR IT',
+    });
+
+    return () => {
+      unsubStatus();
+      unsubEvents();
+      teamSocket.disconnect();
+    };
   }, []);
 
   // Sync theme class on <html>
@@ -246,8 +345,25 @@ export default function App() {
       }
     }
 
+    for (const note of itNotes) {
+      if (
+        note.title.toLowerCase().includes(q) ||
+        note.content.toLowerCase().includes(q) ||
+        note.branchLocation.toLowerCase().includes(q) ||
+        (note.assetCode && note.assetCode.toLowerCase().includes(q))
+      ) {
+        results.push({
+          id: note.id,
+          module: 'team',
+          title: note.title,
+          subtitle: `IT Note · ${note.category} · ${note.branchLocation}`,
+          code: note.assetCode || note.author,
+        });
+      }
+    }
+
     return results.slice(0, 10);
-  }, [globalQuery, db]);
+  }, [globalQuery, db, itNotes]);
 
   const handleNavigate = (module: ActiveModule, subTab?: string) => {
     setActiveModule(module);
@@ -333,6 +449,96 @@ export default function App() {
     });
   };
 
+  const handleResetMaintenance = (payload: MaintenanceResetPayload) => {
+    const shiftYearInDate = (dateStr: string, targetYear: number): string => {
+      if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return `${targetYear}-01-15`;
+      }
+      const [, mm, dd] = dateStr.split('-');
+      if (mm === '02' && dd === '29') {
+        const isLeap =
+          (targetYear % 4 === 0 && targetYear % 100 !== 0) || targetYear % 400 === 0;
+        return `${targetYear}-02-${isLeap ? '29' : '28'}`;
+      }
+      return `${targetYear}-${mm}-${dd}`;
+    };
+
+    const quarterLabel = (q: MaintenanceTask['quarter']): string =>
+      q === 'Q1' ? '1ST' : q === 'Q2' ? '2ND' : q === 'Q3' ? '3RD' : '4TH';
+
+    updateDb((prev) => {
+      let nextTasks: MaintenanceTask[] = prev.maintenanceTasks;
+
+      if (payload.mode === 'clear') {
+        nextTasks =
+          payload.sourceYear === 'ALL'
+            ? []
+            : prev.maintenanceTasks.filter((t) => t.year !== payload.sourceYear);
+      } else if (payload.mode === 'reset-pending') {
+        nextTasks = prev.maintenanceTasks.map((t) => {
+          if (payload.sourceYear !== 'ALL' && t.year !== payload.sourceYear) {
+            return t;
+          }
+          return {
+            ...t,
+            actualDate: '',
+            status: 'Pending',
+            remarks: '',
+            checklistItems: DEFAULT_CHECKLIST.map((c) => ({
+              ...c,
+              checked: false,
+              remarks: '',
+            })),
+          };
+        });
+      } else if (payload.mode === 'rollover') {
+        let sourcePool: MaintenanceTask[];
+        if (payload.sourceYear === 'ALL') {
+          const years = prev.maintenanceTasks.map((t) => t.year).filter(Boolean);
+          const latestYear = years.length > 0 ? Math.max(...years) : new Date().getFullYear();
+          sourcePool = prev.maintenanceTasks.filter((t) => t.year === latestYear);
+        } else {
+          sourcePool = prev.maintenanceTasks.filter((t) => t.year === payload.sourceYear);
+        }
+
+        const clonedForTarget: MaintenanceTask[] = sourcePool.map((t, idx) => ({
+          ...t,
+          id: generateUid('pm'),
+          year: payload.targetYear,
+          seqNumber: `${payload.targetYear}${quarterLabel(t.quarter)}-${String(idx + 1).padStart(2, '0')}`,
+          scheduledDate: shiftYearInDate(t.scheduledDate, payload.targetYear),
+          actualDate: '',
+          status: 'Pending',
+          remarks: '',
+          checklistItems: DEFAULT_CHECKLIST.map((c) => ({
+            ...c,
+            checked: false,
+            remarks: '',
+          })),
+        }));
+
+        if (payload.keepHistory) {
+          const retained = prev.maintenanceTasks.filter(
+            (t) => t.year !== payload.targetYear
+          );
+          nextTasks = [...clonedForTarget, ...retained];
+        } else {
+          nextTasks = clonedForTarget;
+        }
+      }
+
+      const nextAssets = payload.resetAssetLastPmDate
+        ? prev.assets.map((a) => ({ ...a, lastMaintenanceDate: '' }))
+        : prev.assets;
+
+      return {
+        ...prev,
+        maintenanceTasks: nextTasks,
+        assets: nextAssets,
+      };
+    });
+  };
+
   return (
     <div className="min-h-screen flex bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100">
       {/* Mobile Sidebar Backdrop */}
@@ -384,20 +590,32 @@ export default function App() {
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto" aria-label="Primary Navigation">
           {NAV_ITEMS.map((item) => {
             const active = activeModule === item.id;
+            const showUnread = item.id === 'team' && unreadChatCount > 0;
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => handleNavigate(item.id)}
                 title={sidebarCollapsed ? item.label : undefined}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
+                className={`relative w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap ${
                   active
                     ? 'bg-orange-50 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300'
                     : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-100 hover:bg-stone-100/70 dark:hover:bg-stone-800/60'
                 } ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
               >
-                {item.icon}
-                {!sidebarCollapsed && <span>{item.label}</span>}
+                <span className="flex items-center gap-3 min-w-0">
+                  {item.icon}
+                  {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                </span>
+                {showUnread && (
+                  <span
+                    className={`font-mono tabular-nums text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-600 text-white ${
+                      sidebarCollapsed ? 'absolute top-1.5 right-1.5 px-1 py-0' : ''
+                    }`}
+                  >
+                    {unreadChatCount > 9 ? '9+' : unreadChatCount}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -583,6 +801,7 @@ export default function App() {
                       maintenanceTasks: [...imported, ...prev.maintenanceTasks],
                     }))
                   }
+                  onResetMaintenance={handleResetMaintenance}
                 />
               )}
 
@@ -729,6 +948,42 @@ export default function App() {
                       wifiVouchers: [...items, ...prev.wifiVouchers],
                     }))
                   }
+                />
+              )}
+
+              {activeModule === 'team' && (
+                <TeamNotesModule
+                  messages={teamMessages}
+                  notes={itNotes}
+                  onlineUsers={onlineUsers}
+                  wsConnected={wsConnected}
+                  assets={db.assets}
+                  operatorName={operatorName}
+                  onChangeOperatorName={setOperatorName}
+                  onSendMessage={(msg) => {
+                    setTeamMessages((prev) => mergeChatMessage(prev, msg));
+                    teamSocket.sendChatMessage(msg);
+                  }}
+                  onDeleteMessage={(id) => {
+                    setTeamMessages((prev) => prev.filter((m) => m.id !== id));
+                    teamSocket.deleteChatMessage(id);
+                  }}
+                  onUpsertNote={(note) => {
+                    setItNotes((prev) => mergeItNote(prev, note));
+                    teamSocket.upsertNote(note);
+                  }}
+                  onDeleteNote={(id) => {
+                    setItNotes((prev) => prev.filter((n) => n.id !== id));
+                    teamSocket.deleteNote(id);
+                  }}
+                  onJumpToAsset={(branchOrAll) => {
+                    setAssetBranchJump(branchOrAll || 'ALL');
+                    setActiveModule('assets');
+                  }}
+                  onJumpToMaintenance={(code) => {
+                    setPmSearchJump(code);
+                    setActiveModule('maintenance');
+                  }}
                 />
               )}
             </>
