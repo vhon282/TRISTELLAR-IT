@@ -12,7 +12,7 @@ import {
   SEED_DATABASE,
 } from '../data/seedData';
 
-const API_BASE_URL = 'https://expertise-int-ranging-fixes.trycloudflare.com';
+const API_BASE_URL = 'https://instructor-concord-mai-drug.trycloudflare.com';
 const STORAGE_KEY = 'opsmaint_cmms_db_v1';
 const THEME_KEY = 'opsmaint_cmms_theme';
 
