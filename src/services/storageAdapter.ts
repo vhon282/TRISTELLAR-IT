@@ -12,13 +12,14 @@ import {
   SEED_DATABASE,
 } from '../data/seedData';
 
+const API_BASE_URL = 'https://expertise-int-ranging-fixes.trycloudflare.com';
 const STORAGE_KEY = 'opsmaint_cmms_db_v1';
 const THEME_KEY = 'opsmaint_cmms_theme';
 
 /**
  * Clean async-ready storage adapter interface.
- * Implement this interface with Firebase Firestore or Google Sheets API
- * in the next integration phase without changing UI components.
+ * Connected to local PC SQLite server via Cloudflare Tunnel,
+ * with localStorage fallback if the PC server is offline.
  */
 export interface CmmsStorageAdapter {
   readonly providerName: string;
@@ -27,21 +28,43 @@ export interface CmmsStorageAdapter {
   reset(): Promise<CmmsDatabase>;
 }
 
-class LocalStorageCmmsAdapter implements CmmsStorageAdapter {
-  readonly providerName = 'localStorage';
+class PcSqliteCmmsAdapter implements CmmsStorageAdapter {
+  readonly providerName = 'pc-sqlite';
 
   async load(): Promise<CmmsDatabase> {
+    // 1. Try loading from your PC's SQLite database first
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/cmms`);
+      if (response.ok) {
+        const remoteData = await response.json();
+        if (remoteData && typeof remoteData === 'object') {
+          const normalized = normalizeDatabase(remoteData as Partial<CmmsDatabase>);
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+          return normalized;
+        }
+      }
+    } catch {
+      console.warn('PC SQLite server unreachable; falling back to localStorage cache.');
+    }
+
+    // 2. Fallback to localStorage cache if PC is offline or DB is brand new
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) {
-        await this.save(SEED_DATABASE);
-        return structuredClone(SEED_DATABASE);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<CmmsDatabase>;
+        const normalized = normalizeDatabase(parsed);
+        // Push existing localStorage data up to your PC DB if PC DB was empty
+        this.save(normalized).catch(() => undefined);
+        return normalized;
       }
-      const parsed = JSON.parse(raw) as Partial<CmmsDatabase>;
-      return normalizeDatabase(parsed);
     } catch {
-      return structuredClone(SEED_DATABASE);
+      // ignore storage errors
     }
+
+    // 3. First-time seed if neither PC DB nor localStorage has data yet
+    const fresh = structuredClone(SEED_DATABASE);
+    await this.save(fresh);
+    return fresh;
   }
 
   async save(db: CmmsDatabase): Promise<void> {
@@ -50,7 +73,20 @@ class LocalStorageCmmsAdapter implements CmmsStorageAdapter {
       version: 1,
       updatedAt: new Date().toISOString(),
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+
+    // Keep localStorage cache in sync
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage quota errors
+    }
+
+    // Save to your PC's SQLite database
+    await fetch(`${API_BASE_URL}/api/cmms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
   }
 
   async reset(): Promise<CmmsDatabase> {
@@ -232,7 +268,7 @@ function normalizeGoogleSheetLinks(raw: GoogleSheetLink[]): GoogleSheetLink[] {
     });
 }
 
-export const storageAdapter: CmmsStorageAdapter = new LocalStorageCmmsAdapter();
+export const storageAdapter: CmmsStorageAdapter = new PcSqliteCmmsAdapter();
 
 export function loadThemePreference(): 'light' | 'dark' {
   try {
