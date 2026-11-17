@@ -150,6 +150,13 @@ export function normalizeDatabase(partial: Partial<CmmsDatabase>): CmmsDatabase 
       d.employeeName === 'Shem Navarro' ? { ...d, employeeName: 'Vhon' } : d
     ),
     wifiVouchers: rawVouchers,
+    helpdeskReports:
+      Array.isArray(partial.helpdeskReports) && partial.helpdeskReports.length > 0
+        ? partial.helpdeskReports
+        : structuredClone(SEED_DATABASE.helpdeskReports),
+    helpdeskTickets: Array.isArray(partial.helpdeskTickets)
+      ? partial.helpdeskTickets
+      : [],
   };
 }
 

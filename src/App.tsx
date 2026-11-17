@@ -16,6 +16,7 @@ import {
   ArrowRight,
   MessageSquareText,
   LogOut,
+  Headset,
 } from 'lucide-react';
 import {
   ActiveModule,
@@ -37,6 +38,7 @@ import {
 } from './types/cmms';
 import { DEFAULT_CHECKLIST, SEED_DATABASE } from './data/seedData';
 import { generateUid } from './utils/csv';
+import { fetchSeedHelpdeskTickets } from './utils/helpdeskTickets';
 import {
   loadThemePreference,
   saveThemePreference,
@@ -59,6 +61,7 @@ import {
   CommsSubTab,
 } from './components/modules/CommsDirectoryModule';
 import { TeamNotesModule } from './components/modules/TeamNotesModule';
+import { HelpdeskReportModule } from './components/modules/HelpdeskReportModule';
 import { BackupRestoreModal } from './components/modals/BackupRestoreModal';
 import { LoginScreen } from './components/auth/LoginScreen';
 import {
@@ -99,6 +102,11 @@ const NAV_ITEMS: NavItem[] = [
     id: 'comms',
     label: 'IT Comms Hub',
     icon: <RadioTower className="w-4 h-4 shrink-0" />,
+  },
+  {
+    id: 'helpdesk',
+    label: 'Helpdesk Report',
+    icon: <Headset className="w-4 h-4 shrink-0" />,
   },
   {
     id: 'team',
@@ -165,11 +173,80 @@ export default function App() {
     }
   }, [operatorName, authUser]);
 
-  // Load persisted CMMS data once on mount
+  const [reloadingHelpdeskLog, setReloadingHelpdeskLog] = useState(false);
+
+  const HELPDESK_SEED_KEY = 'tristellar_helpdesk_tickets_seeded_v2';
+
+  const handleReloadInitialHelpdeskLog = async () => {
+    setReloadingHelpdeskLog(true);
+    try {
+      const seededTickets = await fetchSeedHelpdeskTickets();
+      if (seededTickets.length > 0) {
+        const seed2026Report = SEED_DATABASE.helpdeskReports.find((r) => r.year === 2026);
+        updateDb((prev) => ({
+          ...prev,
+          helpdeskTickets: seededTickets,
+          helpdeskReports: seed2026Report
+            ? prev.helpdeskReports.map((r) => (r.year === 2026 ? seed2026Report : r))
+            : prev.helpdeskReports,
+        }));
+        try {
+          window.localStorage.setItem(HELPDESK_SEED_KEY, '1');
+        } catch {
+          // ignore storage errors
+        }
+      }
+    } catch {
+      // ignore fetch errors if offline
+    } finally {
+      setReloadingHelpdeskLog(false);
+    }
+  };
+
+  // Load persisted CMMS data once on mount and hydrate 2026 Helpdesk Ticket Log if needed
   useEffect(() => {
-    storageAdapter.load().then((loaded) => {
+    storageAdapter.load().then(async (loaded) => {
       setDb(loaded);
       setIsLoaded(true);
+
+      let alreadySeededV2 = false;
+      try {
+        alreadySeededV2 = window.localStorage.getItem(HELPDESK_SEED_KEY) === '1';
+      } catch {
+        alreadySeededV2 = false;
+      }
+
+      const existingCount = loaded.helpdeskTickets?.length ?? 0;
+      if (!alreadySeededV2 && (existingCount === 0 || existingCount <= 374)) {
+        try {
+          const seededTickets = await fetchSeedHelpdeskTickets();
+          if (seededTickets.length > 0) {
+            const seed2026Report = SEED_DATABASE.helpdeskReports.find(
+              (r) => r.year === 2026
+            );
+            setDb((prev) => {
+              const next: CmmsDatabase = {
+                ...prev,
+                helpdeskTickets: seededTickets,
+                helpdeskReports: seed2026Report
+                  ? prev.helpdeskReports.map((r) =>
+                      r.year === 2026 ? seed2026Report : r
+                    )
+                  : prev.helpdeskReports,
+              };
+              storageAdapter.save(next).catch(() => undefined);
+              return next;
+            });
+            try {
+              window.localStorage.setItem(HELPDESK_SEED_KEY, '1');
+            } catch {
+              // ignore
+            }
+          }
+        } catch {
+          // ignore if asset unavailable
+        }
+      }
     });
   }, []);
 
@@ -385,6 +462,50 @@ export default function App() {
           title: note.title,
           subtitle: `IT Note · ${note.category} · ${note.branchLocation}`,
           code: note.assetCode || note.author,
+        });
+      }
+    }
+
+    for (const rep of db.helpdeskReports || []) {
+      const yearTotal = rep.months.reduce(
+        (sum, m) => sum + m.doneResolved + m.pending + m.onGoing,
+        0
+      );
+      const matchedPersonnel = rep.personnels.find((p) =>
+        p.name.toLowerCase().includes(q)
+      );
+      if (
+        String(rep.year).includes(q) ||
+        'helpdesk'.includes(q) ||
+        matchedPersonnel
+      ) {
+        results.push({
+          id: `hd-${rep.year}`,
+          module: 'helpdesk',
+          title: `${rep.year} IT Helpdesk Report`,
+          subtitle: matchedPersonnel
+            ? `${matchedPersonnel.name}: ${matchedPersonnel.count} tickets · Annual Total: ${yearTotal}`
+            : `Annual Tickets: ${yearTotal} · Personnels: ${rep.personnels.length}`,
+          code: String(rep.year),
+        });
+      }
+    }
+
+    for (const t of db.helpdeskTickets || []) {
+      if (
+        String(t.ticketNo) === q ||
+        t.description.toLowerCase().includes(q) ||
+        t.solution.toLowerCase().includes(q) ||
+        t.notedBy.toLowerCase().includes(q) ||
+        t.attendedBy.toLowerCase().includes(q) ||
+        t.branchLocation.toLowerCase().includes(q)
+      ) {
+        results.push({
+          id: t.id,
+          module: 'helpdesk',
+          title: `Ticket #${t.ticketNo}: ${t.description}`,
+          subtitle: `${t.branchLocation} · ${t.notedBy || 'Staff'} → ${t.attendedBy || 'IT'}`,
+          code: t.date,
         });
       }
     }
@@ -1091,6 +1212,27 @@ export default function App() {
                       wifiVouchers: [...items, ...prev.wifiVouchers],
                     }))
                   }
+                />
+              )}
+
+              {activeModule === 'helpdesk' && (
+                <HelpdeskReportModule
+                  reports={db.helpdeskReports || []}
+                  tickets={db.helpdeskTickets || []}
+                  onSaveReports={(nextReports) =>
+                    updateDb((prev) => ({
+                      ...prev,
+                      helpdeskReports: nextReports,
+                    }))
+                  }
+                  onSaveTickets={(nextTickets) =>
+                    updateDb((prev) => ({
+                      ...prev,
+                      helpdeskTickets: nextTickets,
+                    }))
+                  }
+                  onReloadInitialLog={handleReloadInitialHelpdeskLog}
+                  reloadingLog={reloadingHelpdeskLog}
                 />
               )}
 

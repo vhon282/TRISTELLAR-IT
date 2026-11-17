@@ -201,6 +201,46 @@ export interface OnlinePresenceUser {
   role: string;
 }
 
+export interface HelpdeskMonthRow {
+  month: string;
+  doneResolved: number;
+  pending: number;
+  onGoing: number;
+}
+
+export interface HelpdeskPersonnelCount {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface HelpdeskYearReport {
+  year: number;
+  months: HelpdeskMonthRow[];
+  personnels: HelpdeskPersonnelCount[];
+}
+
+export interface HelpdeskTicket {
+  id: string;
+  ticketNo: number;
+  date: string;
+  branchLocation: string;
+  department: string;
+  description: string;
+  notedBy: string;
+  dateStart: string;
+  dateFinish: string;
+  attendedBy: string;
+  detailsOfNarration: string;
+  solution: string;
+  classification: string;
+  category: string;
+  natureOfWork: string;
+  remarks: string;
+  status: string;
+  cost: string;
+}
+
 export interface CmmsDatabase {
   version: number;
   updatedAt: string;
@@ -213,6 +253,8 @@ export interface CmmsDatabase {
   radioEntries: RadioEntry[];
   wifiAuthorizedDevices: WifiAuthorizedDevice[];
   wifiVouchers: WifiVoucher[];
+  helpdeskReports: HelpdeskYearReport[];
+  helpdeskTickets: HelpdeskTicket[];
 }
 
 export type ActiveModule =
@@ -221,7 +263,8 @@ export type ActiveModule =
   | 'maintenance'
   | 'parts'
   | 'comms'
-  | 'team';
+  | 'team'
+  | 'helpdesk';
 
 export interface GlobalSearchResult {
   id: string;
