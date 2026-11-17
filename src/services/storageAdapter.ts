@@ -11,16 +11,12 @@ import {
   DEFAULT_GOOGLE_SHEET_LINKS,
   SEED_DATABASE,
 } from '../data/seedData';
+import { getSupabaseClient } from './supabaseClient';
 
-const API_BASE_URL = 'https://instructor-concord-mai-drug.trycloudflare.com';
 const STORAGE_KEY = 'opsmaint_cmms_db_v1';
 const THEME_KEY = 'opsmaint_cmms_theme';
+const REMOTE_ROW_ID = 1;
 
-/**
- * Clean async-ready storage adapter interface.
- * Connected to local PC SQLite server via Cloudflare Tunnel,
- * with localStorage fallback if the PC server is offline.
- */
 export interface CmmsStorageAdapter {
   readonly providerName: string;
   load(): Promise<CmmsDatabase>;
@@ -28,71 +24,93 @@ export interface CmmsStorageAdapter {
   reset(): Promise<CmmsDatabase>;
 }
 
-class PcSqliteCmmsAdapter implements CmmsStorageAdapter {
-  readonly providerName = 'pc-sqlite';
+/** Shared CMMS snapshot stored in Supabase; localStorage is used only once to import legacy data. */
+class SupabaseCmmsAdapter implements CmmsStorageAdapter {
+  readonly providerName = 'supabase';
 
   async load(): Promise<CmmsDatabase> {
-    // 1. Try loading from your PC's SQLite database first
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/cmms`);
-      if (response.ok) {
-        const remoteData = await response.json();
-        if (remoteData && typeof remoteData === 'object') {
-          const normalized = normalizeDatabase(remoteData as Partial<CmmsDatabase>);
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-          return normalized;
-        }
-      }
-    } catch {
-      console.warn('PC SQLite server unreachable; falling back to localStorage cache.');
+    const supabase = getSupabaseClient();
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    if (!sessionData.session) {
+      throw new Error('Sign in before loading the shared CMMS workspace.');
     }
 
-    // 2. Fallback to localStorage cache if PC is offline or DB is brand new
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<CmmsDatabase>;
-        const normalized = normalizeDatabase(parsed);
-        // Push existing localStorage data up to your PC DB if PC DB was empty
-        this.save(normalized).catch(() => undefined);
-        return normalized;
-      }
-    } catch {
-      // ignore storage errors
+    const { data, error } = await supabase
+      .from('cmms_state')
+      .select('payload')
+      .eq('id', REMOTE_ROW_ID)
+      .maybeSingle();
+    if (error) throw error;
+    if (data?.payload && typeof data.payload === 'object') {
+      return normalizeDatabase(data.payload as Partial<CmmsDatabase>);
     }
 
-    // 3. First-time seed if neither PC DB nor localStorage has data yet
-    const fresh = structuredClone(SEED_DATABASE);
-    await this.save(fresh);
-    return fresh;
+    // Seed the shared row once. If this browser has the old local dataset, migrate it
+    // with an insert-if-absent so another browser cannot overwrite the winning row.
+    const initialData = this.readLegacyData() ?? structuredClone(SEED_DATABASE);
+    const payload = { ...normalizeDatabase(initialData), updatedAt: new Date().toISOString() };
+    const { error: insertError } = await supabase
+      .from('cmms_state')
+      .insert({ id: REMOTE_ROW_ID, payload, updated_by: sessionData.session.user.id });
+
+    if (insertError && insertError.code !== '23505') throw insertError;
+    if (!insertError) this.clearLegacyData();
+
+    const { data: winner, error: reloadError } = await supabase
+      .from('cmms_state')
+      .select('payload')
+      .eq('id', REMOTE_ROW_ID)
+      .single();
+    if (reloadError) throw reloadError;
+    return normalizeDatabase(winner.payload as Partial<CmmsDatabase>);
   }
 
   async save(db: CmmsDatabase): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    if (!sessionData.session) {
+      throw new Error('Sign in before saving changes to the shared CMMS workspace.');
+    }
+
     const payload: CmmsDatabase = {
-      ...db,
+      ...normalizeDatabase(db),
       version: 1,
       updatedAt: new Date().toISOString(),
     };
-
-    // Keep localStorage cache in sync
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // ignore storage quota errors
-    }
-
-    // Save to your PC's SQLite database
-    await fetch(`${API_BASE_URL}/api/cmms`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+    const { error } = await supabase.from('cmms_state').upsert({
+      id: REMOTE_ROW_ID,
+      payload,
+      updated_by: sessionData.session.user.id,
     });
+    if (error) throw error;
+    this.clearLegacyData();
   }
 
   async reset(): Promise<CmmsDatabase> {
     const fresh = structuredClone(SEED_DATABASE);
     await this.save(fresh);
     return fresh;
+  }
+
+  private readLegacyData(): Partial<CmmsDatabase> | null {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as Partial<CmmsDatabase>;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private clearLegacyData(): void {
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Storage cleanup is best-effort; shared data is already persisted remotely.
+    }
   }
 }
 
@@ -118,15 +136,10 @@ function normalizeTask(task: MaintenanceTask, idx: number): MaintenanceTask {
     2026;
 
   const validQuarter =
-    task.quarter === 'Q1' ||
-    task.quarter === 'Q2' ||
-    task.quarter === 'Q3' ||
-    task.quarter === 'Q4'
+    task.quarter === 'Q1' || task.quarter === 'Q2' || task.quarter === 'Q3' || task.quarter === 'Q4'
       ? task.quarter
       : 'Q4';
-
-  const normalizedTech =
-    (task.technician as string) === 'Shem' ? 'Vhon' : task.technician;
+  const normalizedTech = (task.technician as string) === 'Shem' ? 'Vhon' : task.technician;
 
   return {
     ...task,
@@ -139,32 +152,17 @@ function normalizeTask(task: MaintenanceTask, idx: number): MaintenanceTask {
   };
 }
 
-const DEMO_VOUCHER_IDS = new Set([
-  'wv-001',
-  'wv-002',
-  'wv-003',
-  'wv-004',
-  'wv-005',
-  'wv-006',
-]);
+const DEMO_VOUCHER_IDS = new Set(['wv-001', 'wv-002', 'wv-003', 'wv-004', 'wv-005', 'wv-006']);
 
 export function normalizeDatabase(partial: Partial<CmmsDatabase>): CmmsDatabase {
   const rawTasks = Array.isArray(partial.maintenanceTasks)
     ? partial.maintenanceTasks
     : structuredClone(SEED_DATABASE.maintenanceTasks);
-
-  const rawCctv = Array.isArray(partial.cctvEntries)
-    ? partial.cctvEntries
-    : structuredClone(SEED_DATABASE.cctvEntries);
-
-  const rawRadio = Array.isArray(partial.radioEntries)
-    ? partial.radioEntries
-    : structuredClone(SEED_DATABASE.radioEntries);
-
+  const rawCctv = Array.isArray(partial.cctvEntries) ? partial.cctvEntries : structuredClone(SEED_DATABASE.cctvEntries);
+  const rawRadio = Array.isArray(partial.radioEntries) ? partial.radioEntries : structuredClone(SEED_DATABASE.radioEntries);
   const rawAuthDevices = Array.isArray(partial.wifiAuthorizedDevices)
     ? partial.wifiAuthorizedDevices
     : structuredClone(SEED_DATABASE.wifiAuthorizedDevices);
-
   const rawVouchers = Array.isArray(partial.wifiVouchers)
     ? partial.wifiVouchers.filter((v) => !DEMO_VOUCHER_IDS.has(v.id))
     : [];
@@ -174,36 +172,17 @@ export function normalizeDatabase(partial: Partial<CmmsDatabase>): CmmsDatabase 
     updatedAt: typeof partial.updatedAt === 'string' ? partial.updatedAt : new Date().toISOString(),
     assets: Array.isArray(partial.assets) ? partial.assets : structuredClone(SEED_DATABASE.assets),
     maintenanceTasks: rawTasks.map(normalizeTask),
-    spareParts: Array.isArray(partial.spareParts)
-      ? partial.spareParts
-      : structuredClone(SEED_DATABASE.spareParts),
-    disposalItems: Array.isArray(partial.disposalItems)
-      ? partial.disposalItems
-      : structuredClone(SEED_DATABASE.disposalItems),
-    anydeskEntries: Array.isArray(partial.anydeskEntries)
-      ? partial.anydeskEntries
-      : structuredClone(SEED_DATABASE.anydeskEntries),
-    cctvEntries: rawCctv.map((c) =>
-      c.statusNotes === 'Online · Verified by Shem'
-        ? { ...c, statusNotes: 'Online · Verified by Vhon' }
-        : c
-    ),
-    radioEntries: rawRadio.map((r) =>
-      r.personnelOrUnit === 'Mac / Francis / Shem'
-        ? { ...r, personnelOrUnit: 'Mac / Francis / Vhon' }
-        : r
-    ),
-    wifiAuthorizedDevices: rawAuthDevices.map((d) =>
-      d.employeeName === 'Shem Navarro' ? { ...d, employeeName: 'Vhon' } : d
-    ),
+    spareParts: Array.isArray(partial.spareParts) ? partial.spareParts : structuredClone(SEED_DATABASE.spareParts),
+    disposalItems: Array.isArray(partial.disposalItems) ? partial.disposalItems : structuredClone(SEED_DATABASE.disposalItems),
+    anydeskEntries: Array.isArray(partial.anydeskEntries) ? partial.anydeskEntries : structuredClone(SEED_DATABASE.anydeskEntries),
+    cctvEntries: rawCctv.map((c) => c.statusNotes === 'Online · Verified by Shem' ? { ...c, statusNotes: 'Online · Verified by Vhon' } : c),
+    radioEntries: rawRadio.map((r) => r.personnelOrUnit === 'Mac / Francis / Shem' ? { ...r, personnelOrUnit: 'Mac / Francis / Vhon' } : r),
+    wifiAuthorizedDevices: rawAuthDevices.map((d) => d.employeeName === 'Shem Navarro' ? { ...d, employeeName: 'Vhon' } : d),
     wifiVouchers: rawVouchers,
-    helpdeskReports:
-      Array.isArray(partial.helpdeskReports) && partial.helpdeskReports.length > 0
-        ? partial.helpdeskReports
-        : structuredClone(SEED_DATABASE.helpdeskReports),
-    helpdeskTickets: Array.isArray(partial.helpdeskTickets)
-      ? partial.helpdeskTickets
-      : [],
+    helpdeskReports: Array.isArray(partial.helpdeskReports) && partial.helpdeskReports.length > 0
+      ? partial.helpdeskReports
+      : structuredClone(SEED_DATABASE.helpdeskReports),
+    helpdeskTickets: Array.isArray(partial.helpdeskTickets) ? partial.helpdeskTickets : [],
     googleSheetLinks: Array.isArray(partial.googleSheetLinks)
       ? normalizeGoogleSheetLinks(partial.googleSheetLinks)
       : structuredClone(DEFAULT_GOOGLE_SHEET_LINKS),
@@ -240,13 +219,7 @@ function normalizeAssetBundles(raw: AssetBundle[]): AssetBundle[] {
     }));
 }
 
-const VALID_SHEET_MODULES = new Set<GoogleSheetTargetModule>([
-  'helpdesk',
-  'maintenance',
-  'assets',
-  'comms',
-  'dashboard',
-]);
+const VALID_SHEET_MODULES = new Set<GoogleSheetTargetModule>(['helpdesk', 'maintenance', 'assets', 'comms', 'dashboard']);
 
 function normalizeGoogleSheetLinks(raw: GoogleSheetLink[]): GoogleSheetLink[] {
   return raw
@@ -254,9 +227,7 @@ function normalizeGoogleSheetLinks(raw: GoogleSheetLink[]): GoogleSheetLink[] {
     .map((item, idx) => {
       const trimmedUrl = item.url.trim();
       const safeUrl = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
-      const target = VALID_SHEET_MODULES.has(item.moduleTarget)
-        ? item.moduleTarget
-        : 'dashboard';
+      const target = VALID_SHEET_MODULES.has(item.moduleTarget) ? item.moduleTarget : 'dashboard';
       return {
         id: item.id || `gs-custom-${idx + 1}`,
         label: (item.label || '').trim() || 'Untitled Google Sheet',
@@ -268,15 +239,13 @@ function normalizeGoogleSheetLinks(raw: GoogleSheetLink[]): GoogleSheetLink[] {
     });
 }
 
-export const storageAdapter: CmmsStorageAdapter = new PcSqliteCmmsAdapter();
+export const storageAdapter: CmmsStorageAdapter = new SupabaseCmmsAdapter();
 
 export function loadThemePreference(): 'light' | 'dark' {
   try {
     const saved = window.localStorage.getItem(THEME_KEY);
     if (saved === 'dark' || saved === 'light') return saved;
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
   } catch {
     // ignore storage errors
   }
