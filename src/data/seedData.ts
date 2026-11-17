@@ -1,4 +1,9 @@
-import { CmmsDatabase, MaintenanceChecklistItem } from '../types/cmms';
+import {
+  AssetBundle,
+  CmmsDatabase,
+  GoogleSheetLink,
+  MaintenanceChecklistItem,
+} from '../types/cmms';
 
 export const BRANCHES = ['Conchu', 'Main', 'Bacoor', 'Amaya', 'Bulacan'] as const;
 export const CATEGORIES = ['Computer', 'Printer', 'Peripherals'] as const;
@@ -154,6 +159,140 @@ export const DEFAULT_CHECKLIST: MaintenanceChecklistItem[] = [
     label: 'TEST THE FOLLOWING (Printing, Network Connection)',
     checked: false,
     remarks: '',
+  },
+];
+
+export const DEFAULT_GOOGLE_SHEET_LINKS: GoogleSheetLink[] = [
+  {
+    id: 'gs-helpdesk',
+    label: 'IT HELPDESK REPORT',
+    url: 'https://docs.google.com/spreadsheets/d/1XJsjsPixnLOGSJz1KiAOBmMu5gqnKLHAwrw1grBEhfc/edit?gid=222977062#gid=222977062',
+    moduleTarget: 'helpdesk',
+    description: 'Master 2022–2026 Helpdesk Ticket Log & Annual Summary workbook',
+    isDefault: true,
+  },
+  {
+    id: 'gs-maintenance',
+    label: '2025 Quarterly Maintenance Report',
+    url: 'https://docs.google.com/spreadsheets/d/12zIe9L3J-Bafhcuvdl2-0bJtIYrrdBtCt3x6HXHoO8E/edit?gid=1891032514#gid=1891032514',
+    moduleTarget: 'maintenance',
+    description: 'Quarterly preventive maintenance schedules and inspection tracker',
+    isDefault: true,
+  },
+  {
+    id: 'gs-assets',
+    label: 'ASSET INVENTORY',
+    url: 'https://docs.google.com/spreadsheets/d/1QxumwHR5gj7EbCAQJSoWrAsKbqaeTiXCtX9GtKO4MiU/edit?gid=1231832760#gid=1231832760',
+    moduleTarget: 'assets',
+    description: 'Master hardware registry across Main, Conchu, Bacoor, Amaya, and Bulacan',
+    isDefault: true,
+  },
+  {
+    id: 'gs-conchu-bio',
+    label: 'CONCHU BIOMETRIC DOOR',
+    url: 'https://docs.google.com/spreadsheets/d/1YsvhfF52vEGgkgOPYV4y8fpFiOMOJsWlF0hEc5MTGG8/edit?gid=906594728#gid=906594728',
+    moduleTarget: 'comms',
+    description: 'Conchu branch biometric door access controller & entry log',
+    isDefault: true,
+  },
+];
+
+export const DEFAULT_ASSET_BUNDLES: AssetBundle[] = [
+  {
+    id: 'bnd-001',
+    bundleCode: 'SET-001',
+    bundleName: 'Accounting Workstation Set 01',
+    assigneeName: 'Clarissa Reyes',
+    department: 'Accounting',
+    branchLocation: 'Main',
+    issuedDate: '2026-10-14',
+    registryAssets: [
+      {
+        assetId: 'ast-001',
+        assetCode: '00541-01',
+        equipmentName: 'Accounting Workstation 01',
+        category: 'Computer',
+        serialNumber: 'DL-7090-88341',
+        brandModel: 'Dell OptiPlex 7090 SFF',
+      },
+    ],
+    accessories: [
+      {
+        id: 'acc-001',
+        name: '22" Full HD IPS Monitor',
+        category: 'Monitor',
+        quantity: 1,
+        brandModel: 'Dell E2222H',
+        serialNumber: 'CN-0E22H-4410',
+      },
+      {
+        id: 'acc-002',
+        name: 'Wired USB Keyboard',
+        category: 'Keyboard',
+        quantity: 1,
+        brandModel: 'Logitech K120',
+      },
+      {
+        id: 'acc-003',
+        name: 'Wired Optical Mouse',
+        category: 'Mouse',
+        quantity: 1,
+        brandModel: 'Logitech B100',
+      },
+      {
+        id: 'acc-004',
+        name: 'Desktop UPS 650VA',
+        category: 'UPS',
+        quantity: 1,
+        brandModel: 'APC Back-UPS 650',
+      },
+    ],
+    notes: 'Primary BIS accounting terminal package with UPS backup.',
+    updatedAt: '2026-11-15T08:30:00.000Z',
+  },
+  {
+    id: 'bnd-002',
+    bundleCode: 'SET-002',
+    bundleName: 'Conchu Cashier Workstation Set',
+    assigneeName: 'Marisol Cruz',
+    department: 'Branch Cashier',
+    branchLocation: 'Conchu',
+    issuedDate: '2026-10-18',
+    registryAssets: [
+      {
+        assetId: 'ast-002',
+        assetCode: '00541-02',
+        equipmentName: 'Accounting Workstation 01',
+        category: 'Computer',
+        serialNumber: 'DL-7090-88342',
+        brandModel: 'Dell OptiPlex 7090 SFF',
+      },
+    ],
+    accessories: [
+      {
+        id: 'acc-005',
+        name: '21.5" LED Monitor',
+        category: 'Monitor',
+        quantity: 1,
+        brandModel: 'Dell E2220H',
+      },
+      {
+        id: 'acc-006',
+        name: 'USB Keyboard + Mouse Combo',
+        category: 'Keyboard',
+        quantity: 1,
+        brandModel: 'Logitech MK120',
+      },
+      {
+        id: 'acc-007',
+        name: '4-Socket Surge Protector',
+        category: 'Cable / Adapter',
+        quantity: 1,
+        brandModel: 'Omni WES-4',
+      },
+    ],
+    notes: 'Conchu front cashier desk bundle.',
+    updatedAt: '2026-11-15T08:30:00.000Z',
   },
 ];
 
@@ -1086,4 +1225,6 @@ export const SEED_DATABASE: CmmsDatabase = {
     },
   ],
   helpdeskTickets: [],
+  googleSheetLinks: DEFAULT_GOOGLE_SHEET_LINKS,
+  assetBundles: DEFAULT_ASSET_BUNDLES,
 };

@@ -18,6 +18,8 @@ import {
 import {
   AnyDeskEntry,
   CctvEntry,
+  GoogleSheetLink,
+  GoogleSheetTargetModule,
   RadioEntry,
   VoucherDeviceType,
   VoucherStatus,
@@ -27,6 +29,7 @@ import {
 import { BRANCHES } from '../../data/seedData';
 import { StatusBadge } from '../ui/StatusBadge';
 import { Modal } from '../ui/Modal';
+import { ModuleGoogleSheetsBar } from '../ui/ModuleGoogleSheetsBar';
 import { CsvImportModal } from '../modals/CsvImportModal';
 import { exportToCsv, generateUid, pickField } from '../../utils/csv';
 
@@ -34,6 +37,9 @@ export type CommsSubTab = 'anydesk' | 'cctv' | 'radio' | 'wifi';
 
 interface CommsDirectoryModuleProps {
   initialSubTab?: CommsSubTab;
+  googleSheetLinks: GoogleSheetLink[];
+  onAddSheetLink: (defaultTarget: GoogleSheetTargetModule) => void;
+  onEditSheetLink: (link: GoogleSheetLink) => void;
   anydeskEntries: AnyDeskEntry[];
   cctvEntries: CctvEntry[];
   radioEntries: RadioEntry[];
@@ -58,6 +64,9 @@ interface CommsDirectoryModuleProps {
 
 export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   initialSubTab = 'anydesk',
+  googleSheetLinks,
+  onAddSheetLink,
+  onEditSheetLink,
   anydeskEntries,
   cctvEntries,
   radioEntries,
@@ -521,6 +530,13 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
               </button>
             </div>
           )}
+
+          <ModuleGoogleSheetsBar
+            links={googleSheetLinks}
+            moduleTarget="comms"
+            onAddLink={onAddSheetLink}
+            onEditLink={onEditSheetLink}
+          />
         </div>
       </div>
 

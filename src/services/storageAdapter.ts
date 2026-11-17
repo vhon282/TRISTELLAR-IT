@@ -1,5 +1,16 @@
-import { CmmsDatabase, MaintenanceTask } from '../types/cmms';
-import { DEFAULT_CHECKLIST, SEED_DATABASE } from '../data/seedData';
+import {
+  AssetBundle,
+  CmmsDatabase,
+  GoogleSheetLink,
+  GoogleSheetTargetModule,
+  MaintenanceTask,
+} from '../types/cmms';
+import {
+  DEFAULT_ASSET_BUNDLES,
+  DEFAULT_CHECKLIST,
+  DEFAULT_GOOGLE_SHEET_LINKS,
+  SEED_DATABASE,
+} from '../data/seedData';
 
 const STORAGE_KEY = 'opsmaint_cmms_db_v1';
 const THEME_KEY = 'opsmaint_cmms_theme';
@@ -157,7 +168,68 @@ export function normalizeDatabase(partial: Partial<CmmsDatabase>): CmmsDatabase 
     helpdeskTickets: Array.isArray(partial.helpdeskTickets)
       ? partial.helpdeskTickets
       : [],
+    googleSheetLinks: Array.isArray(partial.googleSheetLinks)
+      ? normalizeGoogleSheetLinks(partial.googleSheetLinks)
+      : structuredClone(DEFAULT_GOOGLE_SHEET_LINKS),
+    assetBundles: Array.isArray(partial.assetBundles)
+      ? normalizeAssetBundles(partial.assetBundles)
+      : structuredClone(DEFAULT_ASSET_BUNDLES),
   };
+}
+
+function normalizeAssetBundles(raw: AssetBundle[]): AssetBundle[] {
+  return raw
+    .filter((b) => b && typeof b.bundleCode === 'string')
+    .map((b, idx) => ({
+      id: b.id || `bnd-custom-${idx + 1}`,
+      bundleCode: (b.bundleCode || `SET-${String(idx + 1).padStart(3, '0')}`).trim(),
+      bundleName: (b.bundleName || 'Computer Set Bundle').trim(),
+      assigneeName: (b.assigneeName || 'Unassigned').trim(),
+      department: b.department ? String(b.department).trim() : '',
+      branchLocation: (b.branchLocation || 'Main').trim(),
+      issuedDate: b.issuedDate || '',
+      registryAssets: Array.isArray(b.registryAssets) ? b.registryAssets : [],
+      accessories: Array.isArray(b.accessories)
+        ? b.accessories.map((acc, aIdx) => ({
+            id: acc.id || `acc-${idx + 1}-${aIdx + 1}`,
+            name: (acc.name || 'Accessory').trim(),
+            category: acc.category || 'Other',
+            quantity: Math.max(1, Number(acc.quantity) || 1),
+            brandModel: acc.brandModel ? String(acc.brandModel).trim() : '',
+            serialNumber: acc.serialNumber ? String(acc.serialNumber).trim() : '',
+          }))
+        : [],
+      notes: b.notes ? String(b.notes).trim() : '',
+      updatedAt: b.updatedAt || new Date().toISOString(),
+    }));
+}
+
+const VALID_SHEET_MODULES = new Set<GoogleSheetTargetModule>([
+  'helpdesk',
+  'maintenance',
+  'assets',
+  'comms',
+  'dashboard',
+]);
+
+function normalizeGoogleSheetLinks(raw: GoogleSheetLink[]): GoogleSheetLink[] {
+  return raw
+    .filter((item) => item && typeof item.url === 'string' && item.url.trim().length > 0)
+    .map((item, idx) => {
+      const trimmedUrl = item.url.trim();
+      const safeUrl = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
+      const target = VALID_SHEET_MODULES.has(item.moduleTarget)
+        ? item.moduleTarget
+        : 'dashboard';
+      return {
+        id: item.id || `gs-custom-${idx + 1}`,
+        label: (item.label || '').trim() || 'Untitled Google Sheet',
+        url: safeUrl,
+        moduleTarget: target,
+        description: item.description ? String(item.description).trim() : '',
+        isDefault: Boolean(item.isDefault),
+      };
+    });
 }
 
 export const storageAdapter: CmmsStorageAdapter = new LocalStorageCmmsAdapter();

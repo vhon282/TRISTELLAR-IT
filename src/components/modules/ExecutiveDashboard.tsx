@@ -8,28 +8,61 @@ import {
   Wifi,
   Download,
   ArrowUpRight,
+  FileSpreadsheet,
+  ExternalLink,
+  Plus,
+  Pencil,
+  Trash2,
+  RotateCcw,
 } from 'lucide-react';
 import {
   ActiveModule,
   CmmsDatabase,
+  GoogleSheetLink,
+  GoogleSheetTargetModule,
   Quarter,
 } from '../../types/cmms';
-import { BRANCHES, CATEGORIES, QUARTERS, TECHNICIANS } from '../../data/seedData';
+import {
+  BRANCHES,
+  CATEGORIES,
+  DEFAULT_GOOGLE_SHEET_LINKS,
+  QUARTERS,
+  TECHNICIANS,
+} from '../../data/seedData';
 import { exportToCsv } from '../../utils/csv';
+import { extractSheetMeta, MODULE_TARGET_LABELS } from '../../utils/googleSheets';
 
 interface ExecutiveDashboardProps {
   db: CmmsDatabase;
   onNavigate: (module: ActiveModule, subTab?: string) => void;
   onFilterAssetsByBranch: (branch: string) => void;
+  onAddSheetLink: (defaultTarget?: GoogleSheetTargetModule) => void;
+  onEditSheetLink: (link: GoogleSheetLink) => void;
+  onDeleteSheetLink: (id: string) => void;
+  onRestoreDefaultSheets: () => void;
 }
 
 export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
   db,
   onNavigate,
   onFilterAssetsByBranch,
+  onAddSheetLink,
+  onEditSheetLink,
+  onDeleteSheetLink,
+  onRestoreDefaultSheets,
 }) => {
   const [selectedQuarter, setSelectedQuarter] = useState<'ALL' | Quarter>('ALL');
   const [selectedYear, setSelectedYear] = useState<'ALL' | number>('ALL');
+  const [confirmDeleteSheetId, setConfirmDeleteSheetId] = useState<string | null>(null);
+  const [sheetStatusMsg, setSheetStatusMsg] = useState<string | null>(null);
+
+  const sheetLinks = db.googleSheetLinks || [];
+  const defaultsDiffer = useMemo(() => {
+    return DEFAULT_GOOGLE_SHEET_LINKS.some((def) => {
+      const match = sheetLinks.find((l) => l.id === def.id);
+      return !match || match.url !== def.url || match.label !== def.label;
+    });
+  }, [sheetLinks]);
 
   const yearOptions = useMemo(() => {
     const years = new Set<number>([2025, 2026, 2027]);
@@ -325,6 +358,174 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
           </p>
         </button>
       </div>
+
+      {/* Google Sheets Source Files Quick Links Card */}
+      <section className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-stone-100 dark:border-stone-800">
+          <div>
+            <div className="flex items-center gap-2">
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                Google Sheets Source Files
+              </h2>
+            </div>
+            <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5 tabular-nums">
+              {sheetLinks.length} linked workbook{sheetLinks.length === 1 ? '' : 's'} · Opens live spreadsheets in a new browser tab
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {defaultsDiffer && (
+              <button
+                type="button"
+                onClick={() => {
+                  onRestoreDefaultSheets();
+                  setConfirmDeleteSheetId(null);
+                  setSheetStatusMsg('Restored the 4 default Google Sheets workbooks.');
+                  setTimeout(() => setSheetStatusMsg(null), 3500);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restore Defaults</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onAddSheetLink('dashboard')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Sheet Link</span>
+            </button>
+          </div>
+        </div>
+
+        {sheetStatusMsg && (
+          <div className="mt-3 px-3 py-2 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-xs font-medium text-emerald-800 dark:text-emerald-200">
+            {sheetStatusMsg}
+          </div>
+        )}
+
+        {sheetLinks.length === 0 ? (
+          <div className="pt-6 pb-2 text-center space-y-3">
+            <p className="text-xs text-stone-500 dark:text-stone-400">
+              No Google Sheets source links configured yet. Add a custom sheet or restore the 4 default IT workbooks.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => onAddSheetLink('dashboard')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Sheet Link</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onRestoreDefaultSheets();
+                  setSheetStatusMsg('Restored the 4 default Google Sheets workbooks.');
+                  setTimeout(() => setSheetStatusMsg(null), 3500);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restore 4 Default Sheets</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-4">
+            {sheetLinks.map((link) => {
+              const meta = extractSheetMeta(link.url);
+              const moduleLabel = MODULE_TARGET_LABELS[link.moduleTarget] || 'Dashboard Only';
+              const isConfirming = confirmDeleteSheetId === link.id;
+              return (
+                <div
+                  key={link.id}
+                  className="p-3.5 rounded-lg border border-stone-200 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-950/40 hover:border-emerald-300 dark:hover:border-emerald-800 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs sm:text-sm font-semibold text-stone-900 dark:text-stone-100 hover:text-emerald-700 dark:hover:text-emerald-400 hover:underline truncate"
+                      >
+                        {link.label}
+                      </a>
+                    </div>
+                    <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-1 font-mono tabular-nums truncate">
+                      {moduleLabel}
+                      {meta.gid ? ` · GID ${meta.gid}` : ' · External Sheet'}
+                      {link.description ? ` · ${link.description}` : ''}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isConfirming ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onDeleteSheetLink(link.id);
+                            setConfirmDeleteSheetId(null);
+                            setSheetStatusMsg(`Removed "${link.label}".`);
+                            setTimeout(() => setSheetStatusMsg(null), 3000);
+                          }}
+                          className="px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors whitespace-nowrap shrink-0"
+                        >
+                          Remove
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteSheetId(null)}
+                          className="px-2 py-1.5 text-[11px] font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-600 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <a
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors whitespace-nowrap shrink-0 group"
+                        >
+                          <span>Open Sheet</span>
+                          <ExternalLink className="w-3 h-3 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => onEditSheetLink(link)}
+                          aria-label={`Edit ${link.label}`}
+                          title="Edit sheet link"
+                          className="p-1.5 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors shrink-0"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteSheetId(link.id)}
+                          aria-label={`Remove ${link.label}`}
+                          title="Remove sheet link"
+                          className="p-1.5 rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-500 dark:text-stone-400 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-200 dark:hover:border-rose-800 transition-colors shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* Quarterly Maintenance Progress & Technician Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

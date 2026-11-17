@@ -241,6 +241,63 @@ export interface HelpdeskTicket {
   cost: string;
 }
 
+export type GoogleSheetTargetModule =
+  | 'helpdesk'
+  | 'maintenance'
+  | 'assets'
+  | 'comms'
+  | 'dashboard';
+
+export interface GoogleSheetLink {
+  id: string;
+  label: string;
+  url: string;
+  moduleTarget: GoogleSheetTargetModule;
+  description?: string;
+  isDefault?: boolean;
+}
+
+export type BundleAccessoryCategory =
+  | 'Keyboard'
+  | 'Mouse'
+  | 'Monitor'
+  | 'UPS'
+  | 'Audio / Webcam'
+  | 'Cable / Adapter'
+  | 'Other';
+
+export interface BundleRegistryItem {
+  assetId: string;
+  assetCode: string;
+  equipmentName: string;
+  category: AssetCategory;
+  serialNumber: string;
+  brandModel: string;
+}
+
+export interface BundleAccessoryItem {
+  id: string;
+  name: string;
+  category: BundleAccessoryCategory | string;
+  quantity: number;
+  brandModel?: string;
+  serialNumber?: string;
+}
+
+export interface AssetBundle {
+  id: string;
+  bundleCode: string;
+  bundleName: string;
+  assigneeName: string;
+  department?: string;
+  branchLocation: string;
+  issuedDate: string;
+  registryAssets: BundleRegistryItem[];
+  accessories: BundleAccessoryItem[];
+  notes?: string;
+  updatedAt: string;
+}
+
 export interface CmmsDatabase {
   version: number;
   updatedAt: string;
@@ -255,6 +312,8 @@ export interface CmmsDatabase {
   wifiVouchers: WifiVoucher[];
   helpdeskReports: HelpdeskYearReport[];
   helpdeskTickets: HelpdeskTicket[];
+  googleSheetLinks: GoogleSheetLink[];
+  assetBundles: AssetBundle[];
 }
 
 export type ActiveModule =

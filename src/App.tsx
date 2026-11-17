@@ -22,10 +22,13 @@ import {
   ActiveModule,
   AnyDeskEntry,
   Asset,
+  AssetBundle,
   CctvEntry,
   CmmsDatabase,
   DisposalKeepItem,
   GlobalSearchResult,
+  GoogleSheetLink,
+  GoogleSheetTargetModule,
   ItNote,
   MaintenanceResetPayload,
   MaintenanceTask,
@@ -36,9 +39,14 @@ import {
   WifiAuthorizedDevice,
   WifiVoucher,
 } from './types/cmms';
-import { DEFAULT_CHECKLIST, SEED_DATABASE } from './data/seedData';
+import {
+  DEFAULT_CHECKLIST,
+  DEFAULT_GOOGLE_SHEET_LINKS,
+  SEED_DATABASE,
+} from './data/seedData';
 import { generateUid } from './utils/csv';
 import { fetchSeedHelpdeskTickets } from './utils/helpdeskTickets';
+import { decodeBundleFromQueryParam } from './utils/assetBundles';
 import {
   loadThemePreference,
   saveThemePreference,
@@ -63,6 +71,8 @@ import {
 import { TeamNotesModule } from './components/modules/TeamNotesModule';
 import { HelpdeskReportModule } from './components/modules/HelpdeskReportModule';
 import { BackupRestoreModal } from './components/modals/BackupRestoreModal';
+import { GoogleSheetLinkModal } from './components/modals/GoogleSheetLinkModal';
+import { ScannedBundlePage } from './components/bundles/ScannedBundlePage';
 import { LoginScreen } from './components/auth/LoginScreen';
 import {
   AuthUser,
@@ -125,6 +135,9 @@ export default function App() {
 
   const [activeModule, setActiveModule] = useState<ActiveModule>('dashboard');
   const [commsSubTab, setCommsSubTab] = useState<CommsSubTab>('anydesk');
+  const [assetViewMode, setAssetViewMode] = useState<
+    'inventory' | 'schedule' | 'bundles'
+  >('inventory');
   const [assetBranchJump, setAssetBranchJump] = useState<string>('ALL');
   const [pmSearchJump, setPmSearchJump] = useState<string>('');
 
@@ -134,6 +147,29 @@ export default function App() {
 
   const [authUser, setAuthUser] = useState<AuthUser | null>(() => loadAuthSession());
   const [backupModalOpen, setBackupModalOpen] = useState(false);
+  const [sheetModalOpen, setSheetModalOpen] = useState(false);
+  const [editingSheetLink, setEditingSheetLink] = useState<GoogleSheetLink | null>(null);
+  const [sheetDefaultTarget, setSheetDefaultTarget] =
+    useState<GoogleSheetTargetModule>('dashboard');
+
+  const [scannedRoute, setScannedRoute] = useState<{
+    active: boolean;
+    bundle: AssetBundle | null;
+    error?: string;
+  }>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const rawBundle = params.get('bundle');
+      if (rawBundle !== null) {
+        const decoded = decodeBundleFromQueryParam(rawBundle);
+        return { active: true, bundle: decoded.bundle, error: decoded.error };
+      }
+    } catch {
+      // ignore URL parsing errors
+    }
+    return { active: false, bundle: null };
+  });
+  const [previewBundle, setPreviewBundle] = useState<AssetBundle | null>(null);
 
   // Real-time Team Chat & IT Notes state (server-authoritative via WebSocket)
   const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
@@ -491,6 +527,46 @@ export default function App() {
       }
     }
 
+    for (const sheet of db.googleSheetLinks || []) {
+      if (
+        sheet.label.toLowerCase().includes(q) ||
+        (sheet.description || '').toLowerCase().includes(q) ||
+        'google sheet'.includes(q) ||
+        'spreadsheet'.includes(q)
+      ) {
+        results.push({
+          id: sheet.id,
+          module: sheet.moduleTarget,
+          title: sheet.label,
+          subtitle: `Google Sheet · ${sheet.description || 'Live spreadsheet source'}`,
+          code: 'SHEET',
+        });
+      }
+    }
+
+    for (const bundle of db.assetBundles || []) {
+      const itemsText = [
+        ...bundle.registryAssets.map((r) => `${r.assetCode} ${r.equipmentName}`),
+        ...bundle.accessories.map((a) => a.name),
+      ].join(' ');
+      if (
+        bundle.bundleCode.toLowerCase().includes(q) ||
+        bundle.bundleName.toLowerCase().includes(q) ||
+        bundle.assigneeName.toLowerCase().includes(q) ||
+        bundle.branchLocation.toLowerCase().includes(q) ||
+        itemsText.toLowerCase().includes(q)
+      ) {
+        results.push({
+          id: bundle.id,
+          module: 'assets',
+          subTab: 'bundles',
+          title: `${bundle.bundleCode} — ${bundle.assigneeName}`,
+          subtitle: `Computer Set · ${bundle.branchLocation} · ${bundle.bundleName}`,
+          code: bundle.bundleCode,
+        });
+      }
+    }
+
     for (const t of db.helpdeskTickets || []) {
       if (
         String(t.ticketNo) === q ||
@@ -517,6 +593,9 @@ export default function App() {
     setActiveModule(module);
     if (module === 'comms' && subTab) {
       setCommsSubTab(subTab as CommsSubTab);
+    }
+    if (module === 'assets' && subTab) {
+      setAssetViewMode(subTab as 'inventory' | 'schedule' | 'bundles');
     }
     setMobileMenuOpen(false);
   };
@@ -735,12 +814,98 @@ export default function App() {
     });
   };
 
+  const handleOpenAddSheetLink = (
+    defaultTarget: GoogleSheetTargetModule = 'dashboard'
+  ) => {
+    setEditingSheetLink(null);
+    setSheetDefaultTarget(defaultTarget);
+    setSheetModalOpen(true);
+  };
+
+  const handleOpenEditSheetLink = (link: GoogleSheetLink) => {
+    setEditingSheetLink(link);
+    setSheetDefaultTarget(link.moduleTarget);
+    setSheetModalOpen(true);
+  };
+
+  const handleSaveSheetLink = (link: GoogleSheetLink) => {
+    updateDb((prev) => ({
+      ...prev,
+      googleSheetLinks: upsertById(prev.googleSheetLinks || [], link),
+    }));
+  };
+
+  const handleDeleteSheetLink = (id: string) => {
+    updateDb((prev) => ({
+      ...prev,
+      googleSheetLinks: (prev.googleSheetLinks || []).filter((l) => l.id !== id),
+    }));
+  };
+
+  const handleRestoreDefaultSheets = () => {
+    updateDb((prev) => {
+      const existing = prev.googleSheetLinks || [];
+      const defaultIds = new Set(DEFAULT_GOOGLE_SHEET_LINKS.map((d) => d.id));
+      const customOnly = existing.filter((l) => !defaultIds.has(l.id));
+      return {
+        ...prev,
+        googleSheetLinks: [
+          ...structuredClone(DEFAULT_GOOGLE_SHEET_LINKS),
+          ...customOnly,
+        ],
+      };
+    });
+  };
+
+  const handleSaveBundle = (bundle: AssetBundle) => {
+    updateDb((prev) => ({
+      ...prev,
+      assetBundles: upsertById(prev.assetBundles || [], bundle),
+    }));
+  };
+
+  const handleDeleteBundle = (bundleId: string) => {
+    updateDb((prev) => ({
+      ...prev,
+      assetBundles: (prev.assetBundles || []).filter((b) => b.id !== bundleId),
+    }));
+  };
+
+  const handleCloseScannedView = () => {
+    setPreviewBundle(null);
+    setScannedRoute({ active: false, bundle: null });
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('bundle')) {
+        url.searchParams.delete('bundle');
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+      }
+    } catch {
+      // ignore history errors
+    }
+  };
+
   const handleSignOut = () => {
     clearAuthSession();
     setAuthUser(null);
     setMobileMenuOpen(false);
     setBackupModalOpen(false);
+    setSheetModalOpen(false);
   };
+
+  if (previewBundle || scannedRoute.active) {
+    return (
+      <ScannedBundlePage
+        bundle={previewBundle || scannedRoute.bundle}
+        error={previewBundle ? undefined : scannedRoute.error}
+        liveAssets={authUser ? db.assets : []}
+        isAuthenticated={Boolean(authUser)}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === 'light' ? 'dark' : 'light'))}
+        onBackToPortal={handleCloseScannedView}
+      />
+    );
+  }
 
   if (!authUser) {
     return (
@@ -1029,6 +1194,10 @@ export default function App() {
                     setAssetBranchJump(branch);
                     setActiveModule('assets');
                   }}
+                  onAddSheetLink={handleOpenAddSheetLink}
+                  onEditSheetLink={handleOpenEditSheetLink}
+                  onDeleteSheetLink={handleDeleteSheetLink}
+                  onRestoreDefaultSheets={handleRestoreDefaultSheets}
                 />
               )}
 
@@ -1036,9 +1205,18 @@ export default function App() {
                 <AssetRegistryModule
                   assets={db.assets}
                   maintenanceTasks={db.maintenanceTasks}
+                  assetBundles={db.assetBundles || []}
                   initialBranchFilter={assetBranchJump}
+                  initialViewMode={assetViewMode}
+                  onViewModeChange={setAssetViewMode}
+                  googleSheetLinks={db.googleSheetLinks || []}
+                  onAddSheetLink={handleOpenAddSheetLink}
+                  onEditSheetLink={handleOpenEditSheetLink}
                   onSaveAsset={handleSaveAsset}
                   onDeleteAsset={handleDeleteAsset}
+                  onSaveBundle={handleSaveBundle}
+                  onDeleteBundle={handleDeleteBundle}
+                  onPreviewScannedBundle={(bundle) => setPreviewBundle(bundle)}
                   onBulkImportAssetsAndPm={handleBulkImportAssetsAndPm}
                   onOpenMaintenanceForAsset={(code) => {
                     setPmSearchJump(code);
@@ -1052,6 +1230,9 @@ export default function App() {
                   tasks={db.maintenanceTasks}
                   assets={db.assets}
                   initialSearch={pmSearchJump}
+                  googleSheetLinks={db.googleSheetLinks || []}
+                  onAddSheetLink={handleOpenAddSheetLink}
+                  onEditSheetLink={handleOpenEditSheetLink}
                   onSaveTask={handleSaveMaintenanceTask}
                   onDeleteTask={(id) =>
                     updateDb((prev) => ({
@@ -1115,6 +1296,9 @@ export default function App() {
               {activeModule === 'comms' && (
                 <CommsDirectoryModule
                   initialSubTab={commsSubTab}
+                  googleSheetLinks={db.googleSheetLinks || []}
+                  onAddSheetLink={handleOpenAddSheetLink}
+                  onEditSheetLink={handleOpenEditSheetLink}
                   anydeskEntries={db.anydeskEntries}
                   cctvEntries={db.cctvEntries}
                   radioEntries={db.radioEntries}
@@ -1219,6 +1403,9 @@ export default function App() {
                 <HelpdeskReportModule
                   reports={db.helpdeskReports || []}
                   tickets={db.helpdeskTickets || []}
+                  googleSheetLinks={db.googleSheetLinks || []}
+                  onAddSheetLink={handleOpenAddSheetLink}
+                  onEditSheetLink={handleOpenEditSheetLink}
                   onSaveReports={(nextReports) =>
                     updateDb((prev) => ({
                       ...prev,
@@ -1287,6 +1474,14 @@ export default function App() {
         onResetSeed={() => {
           storageAdapter.reset().then((fresh) => setDb(fresh));
         }}
+      />
+
+      <GoogleSheetLinkModal
+        isOpen={sheetModalOpen}
+        editingLink={editingSheetLink}
+        defaultModuleTarget={sheetDefaultTarget}
+        onClose={() => setSheetModalOpen(false)}
+        onSave={handleSaveSheetLink}
       />
     </div>
   );

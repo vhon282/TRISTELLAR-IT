@@ -16,6 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import {
+  GoogleSheetLink,
+  GoogleSheetTargetModule,
   HelpdeskMonthRow,
   HelpdeskPersonnelCount,
   HelpdeskTicket,
@@ -23,6 +25,7 @@ import {
 } from '../../types/cmms';
 import { exportToCsv, generateUid } from '../../utils/csv';
 import { Modal } from '../ui/Modal';
+import { ModuleGoogleSheetsBar } from '../ui/ModuleGoogleSheetsBar';
 import { HelpdeskTicketLogPanel } from './HelpdeskTicketLogPanel';
 
 const MONTHS_ORDER = [
@@ -45,6 +48,9 @@ const MONTH_SET = new Set(MONTHS_ORDER.map((m) => m.toLowerCase()));
 interface HelpdeskReportModuleProps {
   reports: HelpdeskYearReport[];
   tickets: HelpdeskTicket[];
+  googleSheetLinks: GoogleSheetLink[];
+  onAddSheetLink: (defaultTarget: GoogleSheetTargetModule) => void;
+  onEditSheetLink: (link: GoogleSheetLink) => void;
   onSaveReports: (nextReports: HelpdeskYearReport[]) => void;
   onSaveTickets: (nextTickets: HelpdeskTicket[]) => void;
   onReloadInitialLog?: () => Promise<void>;
@@ -216,6 +222,9 @@ function parseHelpdeskCsv(text: string): HelpdeskYearReport[] {
 export const HelpdeskReportModule: React.FC<HelpdeskReportModuleProps> = ({
   reports,
   tickets,
+  googleSheetLinks,
+  onAddSheetLink,
+  onEditSheetLink,
   onSaveReports,
   onSaveTickets,
   onReloadInitialLog,
@@ -540,45 +549,54 @@ export const HelpdeskReportModule: React.FC<HelpdeskReportModuleProps> = ({
           </p>
         </div>
 
-        {activeTab === 'summary' && (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setNewYearInput(String((sortedReports[0]?.year || 2026) + 1));
-                setAddYearError('');
-                setAddYearOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Year</span>
-            </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ModuleGoogleSheetsBar
+            links={googleSheetLinks}
+            moduleTarget="helpdesk"
+            onAddLink={onAddSheetLink}
+            onEditLink={onEditSheetLink}
+          />
 
-            <button
-              type="button"
-              onClick={() => {
-                setImportError('');
-                setImportPreview([]);
-                setImportFileName('');
-                setImportOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Import Report CSV</span>
-            </button>
+          {activeTab === 'summary' && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewYearInput(String((sortedReports[0]?.year || 2026) + 1));
+                  setAddYearError('');
+                  setAddYearOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Year</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
-            </button>
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={() => {
+                  setImportError('');
+                  setImportPreview([]);
+                  setImportFileName('');
+                  setImportOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Import Report CSV</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export CSV</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Sub-Tab Switcher */}

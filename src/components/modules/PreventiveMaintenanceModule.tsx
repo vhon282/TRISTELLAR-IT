@@ -21,6 +21,8 @@ import {
   Asset,
   AssetCondition,
   ChecklistSection,
+  GoogleSheetLink,
+  GoogleSheetTargetModule,
   MaintenanceChecklistItem,
   MaintenanceResetMode,
   MaintenanceResetPayload,
@@ -40,6 +42,7 @@ import {
 } from '../../data/seedData';
 import { StatusBadge } from '../ui/StatusBadge';
 import { Modal } from '../ui/Modal';
+import { ModuleGoogleSheetsBar } from '../ui/ModuleGoogleSheetsBar';
 import { CsvImportModal } from '../modals/CsvImportModal';
 import { exportToCsv, generateUid, pickField } from '../../utils/csv';
 
@@ -47,6 +50,9 @@ interface PreventiveMaintenanceModuleProps {
   tasks: MaintenanceTask[];
   assets: Asset[];
   initialSearch?: string;
+  googleSheetLinks: GoogleSheetLink[];
+  onAddSheetLink: (defaultTarget: GoogleSheetTargetModule) => void;
+  onEditSheetLink: (link: GoogleSheetLink) => void;
   onSaveTask: (task: MaintenanceTask, updateParentAsset: boolean) => void;
   onDeleteTask: (taskId: string) => void;
   onBulkImportTasks: (tasks: MaintenanceTask[]) => void;
@@ -97,6 +103,9 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
   tasks,
   assets,
   initialSearch = '',
+  googleSheetLinks,
+  onAddSheetLink,
+  onEditSheetLink,
   onSaveTask,
   onDeleteTask,
   onBulkImportTasks,
@@ -771,6 +780,13 @@ export const PreventiveMaintenanceModule: React.FC<PreventiveMaintenanceModulePr
             <Plus className="w-3.5 h-3.5" />
             <span>New Work Order</span>
           </button>
+
+          <ModuleGoogleSheetsBar
+            links={googleSheetLinks}
+            moduleTarget="maintenance"
+            onAddLink={onAddSheetLink}
+            onEditLink={onEditSheetLink}
+          />
         </div>
       </div>
 
