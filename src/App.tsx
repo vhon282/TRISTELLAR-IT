@@ -293,7 +293,7 @@ export default function App() {
       return;
     }
 
-    fetch('/api/team/state')
+    fetch('https://instructor-concord-mai-drug.trycloudflare.com/api/team/state')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!data) return;
