@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Star,
   Plus,
+  RefreshCw,
   Search,
   Download,
   Upload,
@@ -32,6 +33,7 @@ import { Modal } from '../ui/Modal';
 import { ModuleGoogleSheetsBar } from '../ui/ModuleGoogleSheetsBar';
 import { CsvImportModal } from '../modals/CsvImportModal';
 import { exportToCsv, generateUid, pickField } from '../../utils/csv';
+import { isPortalVoucherRowSet, parsePortalVoucherRows } from '../../utils/wifiVouchers';
 
 export type CommsSubTab = 'anydesk' | 'cctv' | 'radio' | 'wifi';
 
@@ -60,6 +62,8 @@ interface CommsDirectoryModuleProps {
   onSaveVoucher: (entry: WifiVoucher) => void;
   onDeleteVoucher: (id: string) => void;
   onBulkImportVouchers: (entries: WifiVoucher[]) => void;
+  onReloadVouchers?: () => Promise<void>;
+  reloadingVouchers?: boolean;
 }
 
 export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
@@ -87,6 +91,8 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   onSaveVoucher,
   onDeleteVoucher,
   onBulkImportVouchers,
+  onReloadVouchers,
+  reloadingVouchers = false,
 }) => {
   const [subTab, setSubTab] = useState<CommsSubTab>(initialSubTab);
   const [searchQuery, setSearchQuery] = useState('');
@@ -97,6 +103,7 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   const [cctvBranchFilter, setCctvBranchFilter] = useState('ALL');
   const [radioDeptFilter, setRadioDeptFilter] = useState('ALL');
   const [voucherStatusFilter, setVoucherStatusFilter] = useState<'ALL' | VoucherStatus>('ALL');
+  const [voucherGroupFilter, setVoucherGroupFilter] = useState<'ALL' | 'Employee' | 'GUEST'>('ALL');
 
   // Modals
   const [isCsvOpen, setIsCsvOpen] = useState(false);
@@ -236,19 +243,62 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
     });
   }, [wifiAuthorizedDevices, searchQuery]);
 
+  const voucherStats = useMemo(() => {
+    let availableEmp = 0;
+    let availableGuest = 0;
+    let used = 0;
+    let expired = 0;
+    let employeeTotal = 0;
+    let guestTotal = 0;
+
+    for (const v of wifiVouchers) {
+      const grp = (v.userGroup || 'Employee').toUpperCase();
+      const isGuest = grp === 'GUEST';
+      if (isGuest) guestTotal += 1;
+      else employeeTotal += 1;
+
+      if (v.status === 'Available') {
+        if (isGuest) availableGuest += 1;
+        else availableEmp += 1;
+      } else if (v.status === 'Expired') {
+        expired += 1;
+      } else {
+        used += 1;
+      }
+    }
+
+    return {
+      total: wifiVouchers.length,
+      available: availableEmp + availableGuest,
+      availableEmp,
+      availableGuest,
+      used,
+      expired,
+      employeeTotal,
+      guestTotal,
+    };
+  }, [wifiVouchers]);
+
   const filteredVouchers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return wifiVouchers.filter((v) => {
       if (voucherStatusFilter !== 'ALL' && v.status !== voucherStatusFilter) return false;
+      if (voucherGroupFilter !== 'ALL') {
+        const grp = (v.userGroup || 'Employee').toUpperCase();
+        if (grp !== voucherGroupFilter.toUpperCase()) return false;
+      }
       if (!q) return true;
       return (
         v.voucherCode.toLowerCase().includes(q) ||
         v.employeeName.toLowerCase().includes(q) ||
         v.employeeNumber.toLowerCase().includes(q) ||
-        v.deviceType.toLowerCase().includes(q)
+        v.deviceType.toLowerCase().includes(q) ||
+        (v.alias ?? '').toLowerCase().includes(q) ||
+        (v.userGroup ?? '').toLowerCase().includes(q) ||
+        (v.trafficUsed ?? '').toLowerCase().includes(q)
       );
     });
-  }, [wifiVouchers, voucherStatusFilter, searchQuery]);
+  }, [wifiVouchers, voucherStatusFilter, voucherGroupFilter, searchQuery]);
 
   const handleQuickAssignVoucher = (e: React.FormEvent) => {
     e.preventDefault();
@@ -258,6 +308,7 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
     );
     const today = new Date().toISOString().slice(0, 10);
     onSaveVoucher({
+      ...(existing ?? {}),
       id: existing ? existing.id : generateUid('wv'),
       date: today,
       voucherCode: assignVoucherCode.trim(),
@@ -265,6 +316,7 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
       employeeNumber: assignEmployeeNum.trim() || 'TTC-PENDING',
       deviceType: assignDeviceType,
       status: 'Used',
+      portalStatus: 'In use',
     });
     setAssignVoucherCode('');
     setAssignEmployeeName('');
@@ -315,10 +367,17 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
         [
           { key: 'date', label: 'Date' },
           { key: 'voucherCode', label: 'Voucher Code' },
+          { key: 'userGroup', label: 'User Group' },
+          { key: 'period', label: 'Period' },
           { key: 'employeeName', label: 'Employee Name' },
+          { key: 'alias', label: 'Alias' },
           { key: 'employeeNumber', label: 'Employee #' },
           { key: 'deviceType', label: 'Device Type' },
           { key: 'status', label: 'Status' },
+          { key: 'trafficUsed', label: 'Traffic Used/Total' },
+          { key: 'macBinding', label: 'MAC Binding' },
+          { key: 'activatedAt', label: 'Activated At' },
+          { key: 'expiredAt', label: 'Expired At' },
         ],
         filteredVouchers
       );
@@ -390,34 +449,45 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
       };
     }
 
-    const vouchers: WifiVoucher[] = rows
-      .map((row) => {
-        const emp = pickField(row, ['Employee Name', 'Employee']);
-        const rawStatus = pickField(row, ['Status']);
-        const status: VoucherStatus =
-          rawStatus.toLowerCase() === 'used' || Boolean(emp) ? 'Used' : 'Available';
-        const rawDevice = pickField(row, ['Device Type', 'Device']);
-        const deviceType: VoucherDeviceType = rawDevice.toLowerCase().includes('company phone')
-          ? 'Company Phone'
-          : rawDevice.toLowerCase().includes('personal')
-          ? 'Personal Phone'
-          : 'Company Laptop';
-        const code =
-          pickField(row, ['Voucher Code', 'Code', 'Voucher']) ||
-          (Object.values(row)[0]?.trim() ?? '');
-        return {
-          id: generateUid('wv'),
-          date: pickField(row, ['Date']) || new Date().toISOString().slice(0, 10),
-          voucherCode: code,
-          employeeName: emp,
-          employeeNumber: pickField(row, ['Employee #', 'Employee Number', 'Emp No']),
-          deviceType,
-          status,
-        };
-      })
-      .filter((v) => Boolean(v.voucherCode));
+    const vouchers: WifiVoucher[] = isPortalVoucherRowSet(rows)
+      ? parsePortalVoucherRows(rows)
+      : rows
+          .map((row) => {
+            const emp = pickField(row, ['Employee Name', 'Employee']);
+            const rawStatus = pickField(row, ['Status']);
+            const statusLower = rawStatus.toLowerCase();
+            const status: VoucherStatus =
+              statusLower === 'expired'
+                ? 'Expired'
+                : statusLower === 'used' || statusLower === 'in use' || Boolean(emp)
+                ? 'Used'
+                : 'Available';
+            const rawDevice = pickField(row, ['Device Type', 'Device']);
+            const deviceType: VoucherDeviceType = rawDevice.toLowerCase().includes('company phone')
+              ? 'Company Phone'
+              : rawDevice.toLowerCase().includes('personal')
+              ? 'Personal Phone'
+              : rawDevice.toLowerCase().includes('tablet')
+              ? 'Tablet'
+              : rawDevice.toLowerCase().includes('guest')
+              ? 'Guest Device'
+              : 'Company Laptop';
+            const code =
+              pickField(row, ['Voucher Code', 'Code', 'Voucher']) ||
+              (Object.values(row)[0]?.trim() ?? '');
+            return {
+              id: generateUid('wv'),
+              date: pickField(row, ['Date']) || new Date().toISOString().slice(0, 10),
+              voucherCode: code,
+              employeeName: emp,
+              employeeNumber: pickField(row, ['Employee #', 'Employee Number', 'Emp No']),
+              deviceType,
+              status,
+            };
+          })
+          .filter((v) => Boolean(v.voucherCode));
     onBulkImportVouchers(vouchers);
-    return { importedCount: vouchers.length, summary: `Imported ${vouchers.length} Wi-Fi vouchers.` };
+    return { importedCount: vouchers.length, summary: `Merged ${vouchers.length} Wi-Fi vouchers.` };
   };
 
   return (
@@ -499,6 +569,18 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
             </button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
+              {onReloadVouchers && (
+                <button
+                  type="button"
+                  disabled={reloadingVouchers}
+                  onClick={onReloadVouchers}
+                  title="Sync Wi-Fi vouchers from uploaded portal CSV"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${reloadingVouchers ? 'animate-spin' : ''}`} />
+                  <span>Reload Vouchers</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -637,16 +719,31 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
             </select>
           )}
           {subTab === 'wifi' && (
-            <select
-              value={voucherStatusFilter}
-              onChange={(e) => setVoucherStatusFilter(e.target.value as 'ALL' | VoucherStatus)}
-              aria-label="Filter Vouchers by Status"
-              className="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100"
-            >
-              <option value="ALL">All Vouchers</option>
-              <option value="Available">Available</option>
-              <option value="Used">Used</option>
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={voucherGroupFilter}
+                onChange={(e) =>
+                  setVoucherGroupFilter(e.target.value as 'ALL' | 'Employee' | 'GUEST')
+                }
+                aria-label="Filter Vouchers by Group"
+                className="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100"
+              >
+                <option value="ALL">All Groups ({voucherStats.total})</option>
+                <option value="Employee">Employee ({voucherStats.employeeTotal})</option>
+                <option value="GUEST">GUEST ({voucherStats.guestTotal})</option>
+              </select>
+              <select
+                value={voucherStatusFilter}
+                onChange={(e) => setVoucherStatusFilter(e.target.value as 'ALL' | VoucherStatus)}
+                aria-label="Filter Vouchers by Status"
+                className="px-3 py-2 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100"
+              >
+                <option value="ALL">All Statuses</option>
+                <option value="Available">Available ({voucherStats.available})</option>
+                <option value="Used">In Use ({voucherStats.used})</option>
+                <option value="Expired">Expired ({voucherStats.expired})</option>
+              </select>
+            </div>
           )}
 
           <div className="relative flex-1 sm:w-64">
@@ -950,6 +1047,57 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
       {/* Sub-tab 4: Wi-Fi Device List & Voucher Logs */}
       {subTab === 'wifi' && (
         <div className="space-y-6">
+          {/* Voucher Summary Strip */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800">
+              <p className="text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                Total Portal Vouchers
+              </p>
+              <p className="mt-1 font-mono text-xl font-bold tabular-nums text-stone-900 dark:text-stone-100">
+                {voucherStats.total.toLocaleString()}
+              </p>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5 font-mono tabular-nums">
+                Employee: {voucherStats.employeeTotal} · Guest: {voucherStats.guestTotal}
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800">
+              <p className="text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                Available (Not Used)
+              </p>
+              <p className="mt-1 font-mono text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                {voucherStats.available.toLocaleString()}
+              </p>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5 font-mono tabular-nums">
+                Employee: {voucherStats.availableEmp} · Guest: {voucherStats.availableGuest}
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800">
+              <p className="text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                Active / In Use
+              </p>
+              <p className="mt-1 font-mono text-xl font-bold tabular-nums text-orange-600 dark:text-orange-400">
+                {voucherStats.used.toLocaleString()}
+              </p>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">
+                Currently bound &amp; active
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800">
+              <p className="text-[11px] font-medium text-stone-500 dark:text-stone-400">
+                Expired (1-Day Guest)
+              </p>
+              <p className="mt-1 font-mono text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                {voucherStats.expired.toLocaleString()}
+              </p>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">
+                Completed guest sessions
+              </p>
+            </div>
+          </div>
+
           {/* Quick Voucher Assignment Form */}
           <form
             onSubmit={handleQuickAssignVoucher}
@@ -980,7 +1128,7 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
                   ) : (
                     availableVouchers.map((v) => (
                       <option key={v.id} value={v.voucherCode}>
-                        {v.voucherCode} — Available
+                        {v.voucherCode} — {v.userGroup || 'Employee'} ({v.period || 'Unlimited'})
                       </option>
                     ))
                   )}
@@ -1029,6 +1177,8 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
                   <option value="Company Laptop">Company Laptop</option>
                   <option value="Company Phone">Company Phone</option>
                   <option value="Personal Phone">Personal Phone</option>
+                  <option value="Tablet">Tablet</option>
+                  <option value="Guest Device">Guest Device</option>
                 </select>
               </div>
               <div className="flex items-end">
@@ -1130,14 +1280,15 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
                   {filteredVouchers.length} vouchers
                 </span>
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto max-h-[600px]">
                 <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800/50 text-[11px] font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                      <th className="px-3.5 py-2.5 whitespace-nowrap">Date</th>
+                  <thead className="sticky top-0 z-10">
+                    <tr className="border-b border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800 text-[11px] font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       <th className="px-3.5 py-2.5 whitespace-nowrap">Voucher Code</th>
-                      <th className="px-3.5 py-2.5 whitespace-nowrap">Employee</th>
-                      <th className="px-3.5 py-2.5 whitespace-nowrap">Device Type</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Group &amp; Period</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Employee / Alias</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Device / Traffic</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Date</th>
                       <th className="px-3.5 py-2.5 whitespace-nowrap">Status</th>
                       <th className="px-3.5 py-2.5 text-right whitespace-nowrap">Actions</th>
                     </tr>
@@ -1145,9 +1296,6 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
                   <tbody className="divide-y divide-stone-200 dark:divide-stone-800 text-xs">
                     {filteredVouchers.map((v) => (
                       <tr key={v.id} className="hover:bg-stone-50/70 dark:hover:bg-stone-800/40">
-                        <td className="px-3.5 py-2.5 font-mono tabular-nums text-stone-600 dark:text-stone-300 whitespace-nowrap">
-                          {v.date}
-                        </td>
                         <td className="px-3.5 py-2.5 font-mono font-bold text-stone-900 dark:text-stone-100 whitespace-nowrap">
                           <span className="inline-flex items-center gap-1.5">
                             {v.voucherCode}
@@ -1165,18 +1313,43 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
                             </button>
                           </span>
                         </td>
+                        <td className="px-3.5 py-2.5 whitespace-nowrap">
+                          <div className="font-semibold text-stone-800 dark:text-stone-200">
+                            {v.userGroup || 'Employee'}
+                          </div>
+                          <div className="text-[11px] font-mono text-stone-500 dark:text-stone-400">
+                            {v.period || 'Unlimited'}
+                            {v.macBinding ? ` · MAC: ${v.macBinding}` : ''}
+                          </div>
+                        </td>
                         <td className="px-3.5 py-2.5">
                           <div className="font-medium text-stone-900 dark:text-stone-100">
                             {v.employeeName || '—'}
                           </div>
-                          {v.employeeNumber && (
+                          {(v.alias || v.employeeNumber) && (
                             <div className="text-[11px] font-mono text-stone-500 dark:text-stone-400">
-                              {v.employeeNumber}
+                              {[v.alias, v.employeeNumber].filter(Boolean).join(' · ')}
                             </div>
                           )}
                         </td>
-                        <td className="px-3.5 py-2.5 text-stone-600 dark:text-stone-300 whitespace-nowrap">
-                          {v.deviceType}
+                        <td className="px-3.5 py-2.5 whitespace-nowrap">
+                          <div className="text-stone-700 dark:text-stone-300">
+                            {v.deviceType}
+                            {v.devices ? ` (${v.devices})` : ''}
+                          </div>
+                          {v.trafficUsed && (
+                            <div className="text-[11px] font-mono text-stone-500 dark:text-stone-400">
+                              {v.trafficUsed}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-2.5 font-mono tabular-nums text-stone-600 dark:text-stone-300 whitespace-nowrap">
+                          <div>{v.date}</div>
+                          {v.expiredAt && (
+                            <div className="text-[10px] text-rose-500 dark:text-rose-400">
+                              Exp: {v.expiredAt.split(' ')[0]}
+                            </div>
+                          )}
                         </td>
                         <td className="px-3.5 py-2.5 whitespace-nowrap">
                           <StatusBadge value={v.status} />

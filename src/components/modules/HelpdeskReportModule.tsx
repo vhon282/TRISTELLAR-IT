@@ -1,13 +1,18 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
+  ArrowRight,
   BarChart3,
   CheckCircle2,
   Clock,
   Download,
   FileSpreadsheet,
+  Hourglass,
+  Layers,
+  MapPin,
   Pencil,
   Plus,
   RefreshCw,
+  Tag,
   Trash2,
   TrendingUp,
   Upload,
@@ -24,6 +29,11 @@ import {
   HelpdeskYearReport,
 } from '../../types/cmms';
 import { exportToCsv, generateUid } from '../../utils/csv';
+import {
+  normalizeBranchLocation,
+  OFFICIAL_BRANCH_LOCATIONS,
+  summarizeHelpdeskCategories,
+} from '../../utils/helpdeskTickets';
 import { Modal } from '../ui/Modal';
 import { ModuleGoogleSheetsBar } from '../ui/ModuleGoogleSheetsBar';
 import { HelpdeskTicketLogPanel } from './HelpdeskTicketLogPanel';
@@ -231,6 +241,15 @@ export const HelpdeskReportModule: React.FC<HelpdeskReportModuleProps> = ({
   reloadingLog = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'summary' | 'tickets'>('summary');
+  const [requestedFilter, setRequestedFilter] = useState<{
+    category?: string;
+    branch?: string;
+    search?: string;
+    nonce: number;
+  } | null>(null);
+  const [catBranchFilter, setCatBranchFilter] = useState<string>('ALL');
+  const [catClassFilter, setCatClassFilter] = useState<'ALL' | 'Software' | 'Hardware'>('ALL');
+
   const sortedReports = useMemo(
     () => [...reports].sort((a, b) => b.year - a.year),
     [reports]
@@ -536,6 +555,96 @@ export const HelpdeskReportModule: React.FC<HelpdeskReportModuleProps> = ({
           peakMonth: undefined,
         };
 
+  const categorizationBranches = useMemo(() => {
+    const set = new Set<string>(OFFICIAL_BRANCH_LOCATIONS);
+    for (const t of tickets) {
+      const b = normalizeBranchLocation(t.branchLocation || '');
+      if (b) set.add(b);
+    }
+    const officialSet = new Set<string>(OFFICIAL_BRANCH_LOCATIONS);
+    return Array.from(set).sort((a, b) => {
+      const oa = officialSet.has(a);
+      const ob = officialSet.has(b);
+      if (oa !== ob) return oa ? -1 : 1;
+      return a.localeCompare(b);
+    });
+  }, [tickets]);
+
+  const classFilteredTickets = useMemo(() => {
+    if (catClassFilter === 'ALL') return tickets;
+    return tickets.filter(
+      (t) =>
+        (t.classification || '').trim().toLowerCase() ===
+        catClassFilter.toLowerCase()
+    );
+  }, [tickets, catClassFilter]);
+
+  const branchOverviewSummary = useMemo(
+    () => summarizeHelpdeskCategories(classFilteredTickets, true),
+    [classFilteredTickets]
+  );
+
+  const categorizationSummary = useMemo(() => {
+    const filtered = classFilteredTickets.filter((t) => {
+      if (
+        catBranchFilter !== 'ALL' &&
+        normalizeBranchLocation(t.branchLocation || '') !== catBranchFilter
+      ) {
+        return false;
+      }
+      return true;
+    });
+    return summarizeHelpdeskCategories(filtered, true);
+  }, [classFilteredTickets, catBranchFilter]);
+
+  const jumpToCategoryTickets = (
+    category: string,
+    branchOverride?: string,
+    searchOverride?: string
+  ) => {
+    setRequestedFilter({
+      category,
+      branch: branchOverride ?? catBranchFilter,
+      search: searchOverride ?? '',
+      nonce: Date.now(),
+    });
+    setActiveTab('tickets');
+  };
+
+  const handleExportCategorySummaryCsv = () => {
+    exportToCsv(
+      'IT_HELPDESK_2026_CATEGORY_SUMMARY.csv',
+      [
+        { key: 'rank', label: 'Rank' },
+        { key: 'category', label: 'Concern Category' },
+        { key: 'count', label: 'Tickets' },
+        { key: 'sharePct', label: 'Share (%)' },
+        { key: 'softwareCount', label: 'Software' },
+        { key: 'hardwareCount', label: 'Hardware' },
+        { key: 'resolvedCount', label: 'Done / Resolved' },
+        { key: 'avgResolutionDays', label: 'Avg Solve (Days)' },
+        { key: 'maxResolutionDays', label: 'Max Solve (Days)' },
+        { key: 'topBranch', label: 'Top Branch' },
+        { key: 'topNatureOfWork', label: 'Primary Nature of Work' },
+        { key: 'totalCost', label: 'Recorded Cost' },
+      ],
+      categorizationSummary.categories.map((c, idx) => ({
+        rank: idx + 1,
+        category: c.category,
+        count: c.count,
+        sharePct: c.sharePct.toFixed(1),
+        softwareCount: c.softwareCount,
+        hardwareCount: c.hardwareCount,
+        resolvedCount: c.resolvedCount,
+        avgResolutionDays: c.avgResolutionDays.toFixed(2),
+        maxResolutionDays: c.maxResolutionDays,
+        topBranch: c.topBranch,
+        topNatureOfWork: c.topNatureOfWork,
+        totalCost: c.totalCost.toFixed(2),
+      }))
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header & Actions */}
@@ -640,6 +749,7 @@ export const HelpdeskReportModule: React.FC<HelpdeskReportModuleProps> = ({
           onSaveTickets={onSaveTickets}
           onReloadInitialLog={onReloadInitialLog}
           reloadingLog={reloadingLog}
+          requestedFilter={requestedFilter}
         />
       ) : (
         <>
@@ -1059,6 +1169,636 @@ export const HelpdeskReportModule: React.FC<HelpdeskReportModuleProps> = ({
           )}
         </section>
       </div>
+
+      {/* Helpdesk Concern Categorization & Most Needed Category */}
+      {tickets.length > 0 && (
+        <section className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-stone-200 dark:border-stone-800 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100 flex items-center gap-2">
+                <Tag className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                <span>Helpdesk Concern Categorization &amp; Most Needed Support (2026 Log)</span>
+              </h2>
+              <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
+                Ranked breakdown of {categorizationSummary.totalTickets.toLocaleString()} logged support requests by concern category — click any category to inspect its tickets
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={catBranchFilter}
+                onChange={(e) => setCatBranchFilter(e.target.value)}
+                aria-label="Filter categorization by branch"
+                className="px-2.5 py-1.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-800 dark:text-stone-200"
+              >
+                <option value="ALL">All Branches</option>
+                {categorizationBranches.map((b) => (
+                  <option key={b} value={b}>
+                    {b}
+                  </option>
+                ))}
+              </select>
+
+              <div className="inline-flex rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 p-0.5 text-[11px] font-semibold">
+                {(['ALL', 'Software', 'Hardware'] as const).map((cls) => (
+                  <button
+                    key={cls}
+                    type="button"
+                    onClick={() => setCatClassFilter(cls)}
+                    className={`px-2.5 py-1 rounded-md transition-colors ${
+                      catClassFilter === cls
+                        ? 'bg-orange-600 text-white'
+                        : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200'
+                    }`}
+                  >
+                    {cls === 'ALL' ? 'All Types' : cls}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleExportCategorySummaryCsv}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-700 dark:text-stone-200 hover:bg-stone-50 dark:hover:bg-stone-800 transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Categories</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-5">
+            {categorizationSummary.totalTickets === 0 ? (
+              <p className="text-xs text-stone-500 dark:text-stone-400 text-center py-6">
+                No tickets match the selected branch/classification filter.
+              </p>
+            ) : (
+              <>
+                {/* Top Category Spotlight Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  {/* #1 Most Needed Concern Spotlight */}
+                  {categorizationSummary.topCategory && (
+                    <div className="lg:col-span-5 rounded-xl border border-orange-200 dark:border-orange-900/60 bg-orange-50/70 dark:bg-orange-950/25 p-4 flex flex-col justify-between gap-3">
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-orange-700 dark:text-orange-400">
+                            #1 Most Needed Helpdesk Concern
+                          </span>
+                          <span className="font-mono text-xs font-bold tabular-nums text-orange-700 dark:text-orange-300">
+                            {categorizationSummary.topCategory.sharePct.toFixed(1)}% of requests
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-baseline gap-2.5">
+                          <h3 className="font-display text-2xl font-bold text-stone-900 dark:text-stone-100">
+                            {categorizationSummary.topCategory.category}
+                          </h3>
+                          <span className="font-mono text-lg font-bold tabular-nums text-orange-600 dark:text-orange-400">
+                            {categorizationSummary.topCategory.count.toLocaleString()} tickets
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs text-stone-600 dark:text-stone-300">
+                          Top branch: <strong>{categorizationSummary.topCategory.topBranch}</strong> · Primary work:{' '}
+                          <strong>{categorizationSummary.topCategory.topNatureOfWork}</strong>
+                        </p>
+                        {categorizationSummary.topCategory.sampleConcerns.length > 0 && (
+                          <p className="mt-2 text-[11px] text-stone-500 dark:text-stone-400 line-clamp-2">
+                            Common requests: {categorizationSummary.topCategory.sampleConcerns.join(' · ')}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 border-t border-orange-200/70 dark:border-orange-900/40 text-xs">
+                        <span className="text-stone-600 dark:text-stone-400 font-mono tabular-nums">
+                          SW: {categorizationSummary.topCategory.softwareCount.toLocaleString()} · HW:{' '}
+                          {categorizationSummary.topCategory.hardwareCount.toLocaleString()}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            jumpToCategoryTickets(categorizationSummary.topCategory!.category)
+                          }
+                          className="inline-flex items-center gap-1 font-semibold text-orange-700 dark:text-orange-300 hover:underline"
+                        >
+                          <span>Inspect {categorizationSummary.topCategory.category} Tickets</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* #2 & #3 Next Highest Concerns */}
+                  <div className="lg:col-span-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                    {categorizationSummary.categories.slice(1, 3).map((cat, idx) => (
+                      <button
+                        key={cat.category}
+                        type="button"
+                        onClick={() => jumpToCategoryTickets(cat.category)}
+                        className="text-left p-3.5 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/80 dark:bg-stone-800/40 hover:border-orange-300 dark:hover:border-orange-800 transition-colors flex flex-col justify-between gap-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold text-stone-500 dark:text-stone-400">
+                            #{idx + 2} Category Needed
+                          </span>
+                          <span className="font-mono text-xs font-semibold tabular-nums text-stone-700 dark:text-stone-300">
+                            {cat.sharePct.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-sm font-bold text-stone-900 dark:text-stone-100">
+                            {cat.category}
+                          </span>
+                          <span className="font-mono text-sm font-bold tabular-nums text-orange-600 dark:text-orange-400">
+                            {cat.count.toLocaleString()} tickets
+                          </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-stone-200 dark:bg-stone-800 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-orange-500"
+                            style={{ width: `${Math.min(100, Math.round(cat.sharePct * 2))}%` }}
+                          />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Software vs Hardware & Work Nature Summary */}
+                  <div className="lg:col-span-3 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/80 dark:bg-stone-800/40 p-4 flex flex-col justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-stone-800 dark:text-stone-200">
+                        <Layers className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
+                        <span>Classification Split</span>
+                      </div>
+                      <div className="mt-2.5 space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-mono tabular-nums">
+                          <span className="text-stone-700 dark:text-stone-300">
+                            Software: <strong>{categorizationSummary.softwareCount.toLocaleString()}</strong> (
+                            {((categorizationSummary.softwareCount / categorizationSummary.totalTickets) * 100).toFixed(1)}%)
+                          </span>
+                          <span className="text-stone-700 dark:text-stone-300">
+                            HW: <strong>{categorizationSummary.hardwareCount.toLocaleString()}</strong>
+                          </span>
+                        </div>
+                        <div className="h-2.5 rounded-full bg-stone-200 dark:bg-stone-700 overflow-hidden flex">
+                          <div
+                            className="h-full bg-orange-600"
+                            style={{
+                              width: `${
+                                (categorizationSummary.softwareCount /
+                                  categorizationSummary.totalTickets) *
+                                100
+                              }%`,
+                            }}
+                          />
+                          <div
+                            className="h-full bg-amber-500"
+                            style={{
+                              width: `${
+                                (categorizationSummary.hardwareCount /
+                                  categorizationSummary.totalTickets) *
+                                100
+                              }%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-stone-200 dark:border-stone-700 space-y-1.5">
+                      <p className="text-[11px] font-semibold text-stone-500 dark:text-stone-400 uppercase tracking-wider">
+                        Top Nature of Work
+                      </p>
+                      {categorizationSummary.naturesOfWork.slice(0, 3).map((n) => (
+                        <div
+                          key={n.name}
+                          className="flex items-center justify-between gap-2 text-[11px]"
+                        >
+                          <span className="text-stone-700 dark:text-stone-300 truncate">
+                            {n.name}
+                          </span>
+                          <span className="font-mono font-semibold tabular-nums text-stone-900 dark:text-stone-100 shrink-0">
+                            {n.count.toLocaleString()} ({n.sharePct.toFixed(0)}%)
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Branch / Location Top Concern Cards */}
+                {branchOverviewSummary.byBranch.length > 0 && (
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-xs font-semibold text-stone-700 dark:text-stone-300 flex items-center gap-1.5 uppercase tracking-wider">
+                        <MapPin className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
+                        <span>Most Needed Concern by Branch / Location</span>
+                      </h3>
+                      {catBranchFilter !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setCatBranchFilter('ALL')}
+                          className="text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                        >
+                          Show all branches ({catBranchFilter} selected)
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      {branchOverviewSummary.byBranch
+                        .filter((b) => b.isOfficial || b.totalTickets > 0)
+                        .map((b) => {
+                          const isSelected = catBranchFilter === b.branch;
+                          return (
+                            <div
+                              key={b.branch}
+                              className={`rounded-xl border p-3.5 transition-colors flex flex-col justify-between gap-2.5 ${
+                                isSelected
+                                  ? 'border-orange-500 bg-orange-50/70 dark:bg-orange-950/30'
+                                  : 'border-stone-200 dark:border-stone-800 bg-stone-50/60 dark:bg-stone-800/30 hover:border-orange-300 dark:hover:border-orange-800'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCatBranchFilter(isSelected ? 'ALL' : b.branch)
+                                }
+                                className="text-left space-y-1.5"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-bold text-stone-900 dark:text-stone-100 truncate">
+                                    {b.branch}
+                                  </span>
+                                  <span className="font-mono text-xs font-bold tabular-nums text-stone-700 dark:text-stone-300 shrink-0">
+                                    {b.totalTickets.toLocaleString()}
+                                  </span>
+                                </div>
+
+                                <div className="text-[11px] text-stone-600 dark:text-stone-300">
+                                  Top:{' '}
+                                  <strong className="text-orange-700 dark:text-orange-400">
+                                    {b.topCategory}
+                                  </strong>{' '}
+                                  {b.topCategoryCount > 0 && (
+                                    <span className="font-mono tabular-nums text-stone-500 dark:text-stone-400">
+                                      ({b.topCategoryCount} · {b.topCategorySharePct.toFixed(0)}%)
+                                    </span>
+                                  )}
+                                </div>
+
+                                {b.topCategories.length > 1 && (
+                                  <div className="pt-1 flex flex-wrap gap-1">
+                                    {b.topCategories.slice(0, 3).map((tc) => (
+                                      <span
+                                        key={tc.category}
+                                        className="px-1.5 py-0.5 rounded bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 text-[10px] font-mono text-stone-600 dark:text-stone-300"
+                                      >
+                                        {tc.category}: {tc.count}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </button>
+
+                              <div className="pt-1.5 border-t border-stone-200/70 dark:border-stone-700/70 flex items-center justify-between text-[11px]">
+                                <span className="font-mono text-stone-500 dark:text-stone-400">
+                                  {b.sharePct.toFixed(1)}% share
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => jumpToCategoryTickets('ALL', b.branch)}
+                                  className="font-semibold text-orange-700 dark:text-orange-400 hover:underline"
+                                >
+                                  View Branch →
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Longest Problems to Solve (Resolution Duration Analysis) */}
+                <div className="rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-50/50 dark:bg-stone-950/40 p-4 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-semibold text-stone-800 dark:text-stone-200 flex items-center gap-1.5 uppercase tracking-wider">
+                        <Hourglass className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                        <span>Longest Problems to Solve (Date Start → Date Finish)</span>
+                      </h3>
+                      <p className="text-[11px] text-stone-500 dark:text-stone-400 mt-0.5">
+                        Identifies multi-day incidents and slowest-to-resolve concern categories across the logged requests
+                      </p>
+                    </div>
+                    <span className="font-mono text-[11px] font-semibold px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-900/60">
+                      {categorizationSummary.multiDayCount} multi-day ticket{categorizationSummary.multiDayCount === 1 ? '' : 's'} (1+ days)
+                    </span>
+                  </div>
+
+                  {categorizationSummary.longestTickets.length === 0 ? (
+                    <p className="text-xs text-stone-500 dark:text-stone-400 py-3">
+                      All {categorizationSummary.totalTickets.toLocaleString()} tickets in this view were resolved on the same day.
+                    </p>
+                  ) : (
+                    <>
+                      {(() => {
+                        const topLongest = categorizationSummary.longestTickets[0];
+                        const tiedCount = categorizationSummary.longestTickets.filter(
+                          (item) => item.days === topLongest.days
+                        ).length;
+                        const slowestCat = categorizationSummary.slowestCategory;
+                        return (
+                          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                            {/* #1 Longest Single Problem */}
+                            <div className="lg:col-span-7 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-950/20 p-3.5 flex flex-col justify-between gap-2.5">
+                              <div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                                    #1 Longest Single Problem to Solve
+                                  </span>
+                                  <span className="font-mono text-xs font-bold tabular-nums px-2 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200">
+                                    {topLongest.days} day{topLongest.days === 1 ? '' : 's'}
+                                  </span>
+                                </div>
+
+                                <div className="mt-1.5 flex flex-wrap items-baseline gap-2">
+                                  <span className="font-mono text-sm font-bold text-stone-900 dark:text-stone-100">
+                                    #{topLongest.ticket.ticketNo}
+                                  </span>
+                                  <span className="text-sm font-bold text-stone-900 dark:text-stone-100">
+                                    {topLongest.ticket.description}
+                                  </span>
+                                </div>
+
+                                <p className="mt-1 text-[11px] text-stone-600 dark:text-stone-300">
+                                  Category: <strong>{topLongest.category}</strong> · Branch:{' '}
+                                  <strong>{topLongest.branch}</strong> ·{' '}
+                                  {topLongest.ticket.dateStart || topLongest.ticket.date} →{' '}
+                                  {topLongest.ticket.dateFinish || topLongest.ticket.date}
+                                </p>
+
+                                {topLongest.ticket.solution && (
+                                  <p className="mt-1 text-[11px] text-stone-500 dark:text-stone-400">
+                                    Solution: {topLongest.ticket.solution}
+                                    {tiedCount > 1
+                                      ? ` (${tiedCount} incidents tied at ${topLongest.days} days)`
+                                      : ''}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-amber-200/70 dark:border-amber-900/40 text-[11px]">
+                                <span className="font-mono text-stone-600 dark:text-stone-400">
+                                  Attended by: {topLongest.ticket.attendedBy || '—'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    jumpToCategoryTickets(
+                                      topLongest.category,
+                                      topLongest.branch !== '—' ? topLongest.branch : 'ALL',
+                                      topLongest.ticket.description.slice(0, 28)
+                                    )
+                                  }
+                                  className="inline-flex items-center gap-1 font-semibold text-amber-800 dark:text-amber-300 hover:underline"
+                                >
+                                  <span>Inspect Ticket #{topLongest.ticket.ticketNo}</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Slowest Category on Average */}
+                            {slowestCat && (
+                              <div className="lg:col-span-5 rounded-xl border border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 p-3.5 flex flex-col justify-between gap-2.5">
+                                <div>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                      Slowest Category on Average
+                                    </span>
+                                    <span className="font-mono text-xs font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                                      {slowestCat.avgResolutionDays.toFixed(1)}d avg
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-1.5 flex items-baseline justify-between gap-2">
+                                    <h4 className="font-display text-lg font-bold text-stone-900 dark:text-stone-100">
+                                      {slowestCat.category}
+                                    </h4>
+                                    <span className="font-mono text-xs font-semibold tabular-nums text-stone-600 dark:text-stone-300">
+                                      Max {slowestCat.maxResolutionDays}d · {slowestCat.count} tickets
+                                    </span>
+                                  </div>
+
+                                  <p className="mt-1 text-[11px] text-stone-600 dark:text-stone-300">
+                                    Top branch: <strong>{slowestCat.topBranch}</strong> · Primary work:{' '}
+                                    <strong>{slowestCat.topNatureOfWork}</strong>
+                                  </p>
+                                </div>
+
+                                <div className="flex items-center justify-between pt-2 border-t border-stone-200/70 dark:border-stone-800 text-[11px]">
+                                  <span className="font-mono text-stone-500 dark:text-stone-400">
+                                    Total elapsed: {slowestCat.totalResolutionDays} days
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => jumpToCategoryTickets(slowestCat.category)}
+                                    className="inline-flex items-center gap-1 font-semibold text-orange-700 dark:text-orange-400 hover:underline"
+                                  >
+                                    <span>View {slowestCat.category} Log</span>
+                                    <ArrowRight className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Top Longest-to-Solve Incidents Table */}
+                      <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-xl bg-white dark:bg-stone-900">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-stone-50 dark:bg-stone-950/70 border-b border-stone-200 dark:border-stone-800 text-stone-500 dark:text-stone-400 uppercase tracking-wider text-[10px]">
+                              <th className="py-2 px-3 font-semibold">#</th>
+                              <th className="py-2 px-3 font-semibold">Ticket</th>
+                              <th className="py-2 px-3 font-semibold text-right">Solve Time</th>
+                              <th className="py-2 px-3 font-semibold">Concern &amp; Solution</th>
+                              <th className="py-2 px-3 font-semibold">Category</th>
+                              <th className="py-2 px-3 font-semibold">Branch</th>
+                              <th className="py-2 px-3 font-semibold">Start → Finish</th>
+                              <th className="py-2 px-3 font-semibold text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
+                            {categorizationSummary.longestTickets.map((item, idx) => (
+                              <tr
+                                key={item.ticket.id}
+                                className="hover:bg-stone-50/80 dark:hover:bg-stone-800/40 transition-colors align-top"
+                              >
+                                <td className="py-2 px-3 font-mono font-bold text-stone-500 dark:text-stone-400">
+                                  {idx + 1}
+                                </td>
+                                <td className="py-2 px-3 font-mono font-bold text-stone-900 dark:text-stone-100 whitespace-nowrap">
+                                  #{item.ticket.ticketNo}
+                                </td>
+                                <td className="py-2 px-3 text-right whitespace-nowrap">
+                                  <span
+                                    className={`inline-block font-mono text-[11px] font-bold px-2 py-0.5 rounded ${
+                                      item.days >= 14
+                                        ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                        : 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                    }`}
+                                  >
+                                    {item.days}d
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 min-w-[220px] max-w-[360px]">
+                                  <div className="font-medium text-stone-900 dark:text-stone-100 line-clamp-1">
+                                    {item.ticket.description}
+                                  </div>
+                                  {item.ticket.solution && (
+                                    <div className="text-[11px] text-stone-500 dark:text-stone-400 line-clamp-1">
+                                      Solution: {item.ticket.solution}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 font-semibold text-stone-800 dark:text-stone-200 whitespace-nowrap">
+                                  {item.category}
+                                </td>
+                                <td className="py-2 px-3 text-stone-700 dark:text-stone-300 whitespace-nowrap">
+                                  {item.branch}
+                                </td>
+                                <td className="py-2 px-3 font-mono text-[11px] text-stone-500 dark:text-stone-400 whitespace-nowrap">
+                                  {item.ticket.dateStart || item.ticket.date} →{' '}
+                                  {item.ticket.dateFinish || item.ticket.date}
+                                </td>
+                                <td className="py-2 px-3 text-right whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      jumpToCategoryTickets(
+                                        item.category,
+                                        item.branch !== '—' ? item.branch : 'ALL',
+                                        item.ticket.description.slice(0, 28)
+                                      )
+                                    }
+                                    className="px-2 py-1 rounded text-[11px] font-medium text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/50 hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors"
+                                  >
+                                    Inspect
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Ranked Category Breakdown Table */}
+                <div className="overflow-x-auto border border-stone-200 dark:border-stone-800 rounded-xl">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-stone-50 dark:bg-stone-950/70 border-b border-stone-200 dark:border-stone-800 text-stone-500 dark:text-stone-400 uppercase tracking-wider text-[11px]">
+                        <th className="py-2.5 px-3 font-semibold">Rank</th>
+                        <th className="py-2.5 px-3 font-semibold">Concern Category</th>
+                        <th className="py-2.5 px-3 font-semibold min-w-[180px]">Volume Share</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Tickets</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">SW / HW</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Avg / Max Solve</th>
+                        <th className="py-2.5 px-3 font-semibold">Top Branch</th>
+                        <th className="py-2.5 px-3 font-semibold">Primary Nature</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Recorded Cost</th>
+                        <th className="py-2.5 px-3 font-semibold text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
+                      {categorizationSummary.categories.map((cat, idx) => {
+                        const maxCount = categorizationSummary.topCategory?.count || 1;
+                        const relWidth = Math.max(4, Math.round((cat.count / maxCount) * 100));
+                        return (
+                          <tr
+                            key={cat.category}
+                            className="hover:bg-stone-50/80 dark:hover:bg-stone-800/40 transition-colors"
+                          >
+                            <td className="py-2.5 px-3 font-mono font-bold text-stone-500 dark:text-stone-400">
+                              #{idx + 1}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-stone-900 dark:text-stone-100 whitespace-nowrap">
+                              {cat.category}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 h-2 rounded-full bg-stone-100 dark:bg-stone-800 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${
+                                      idx === 0
+                                        ? 'bg-orange-600'
+                                        : idx < 3
+                                        ? 'bg-orange-500/80'
+                                        : 'bg-stone-400 dark:bg-stone-600'
+                                    }`}
+                                    style={{ width: `${relWidth}%` }}
+                                  />
+                                </div>
+                                <span className="font-mono text-[11px] tabular-nums text-stone-600 dark:text-stone-400 w-11 text-right">
+                                  {cat.sharePct.toFixed(1)}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold tabular-nums text-stone-900 dark:text-stone-100">
+                              {cat.count.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-[11px] tabular-nums text-stone-600 dark:text-stone-300 whitespace-nowrap">
+                              {cat.softwareCount} / {cat.hardwareCount}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono text-[11px] tabular-nums whitespace-nowrap">
+                              {cat.count === 0 ? (
+                                <span className="text-stone-400">—</span>
+                              ) : cat.maxResolutionDays === 0 ? (
+                                <span className="text-stone-500 dark:text-stone-400">Same day</span>
+                              ) : (
+                                <span className="text-amber-700 dark:text-amber-400 font-semibold">
+                                  {cat.avgResolutionDays.toFixed(1)}d · {cat.maxResolutionDays}d max
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-stone-700 dark:text-stone-300 whitespace-nowrap">
+                              {cat.topBranch}
+                            </td>
+                            <td className="py-2.5 px-3 text-stone-600 dark:text-stone-400 whitespace-nowrap">
+                              {cat.topNatureOfWork}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono tabular-nums text-stone-700 dark:text-stone-300 whitespace-nowrap">
+                              {cat.totalCost > 0
+                                ? `₱${cat.totalCost.toLocaleString(undefined, {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}`
+                                : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => jumpToCategoryTickets(cat.category)}
+                                className="px-2.5 py-1 rounded-md text-xs font-medium text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/50 hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors whitespace-nowrap"
+                              >
+                                View Log
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Bottom Data Table */}
       <section className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden">

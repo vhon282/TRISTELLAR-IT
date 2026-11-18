@@ -46,6 +46,7 @@ import {
 } from './data/seedData';
 import { generateUid } from './utils/csv';
 import { fetchSeedHelpdeskTickets } from './utils/helpdeskTickets';
+import { fetchSeedWifiVouchers, mergeWifiVouchers } from './utils/wifiVouchers';
 import { decodeBundleFromQueryParam } from './utils/assetBundles';
 import {
   loadThemePreference,
@@ -190,8 +191,32 @@ export default function App() {
   }, [activeModule]);
 
   const [reloadingHelpdeskLog, setReloadingHelpdeskLog] = useState(false);
+  const [reloadingVouchers, setReloadingVouchers] = useState(false);
 
-  const HELPDESK_SEED_KEY = 'tristellar_helpdesk_tickets_seeded_v2';
+  const HELPDESK_SEED_KEY = 'tristellar_helpdesk_tickets_seeded_v4';
+  const WIFI_VOUCHER_SEED_KEY = 'tristellar_wifi_vouchers_seeded_v1';
+
+  const handleReloadInitialVouchers = async () => {
+    setReloadingVouchers(true);
+    try {
+      const seededVouchers = await fetchSeedWifiVouchers();
+      if (seededVouchers.length > 0) {
+        updateDb((prev) => ({
+          ...prev,
+          wifiVouchers: mergeWifiVouchers(prev.wifiVouchers, seededVouchers),
+        }));
+        try {
+          window.localStorage.setItem(WIFI_VOUCHER_SEED_KEY, '1');
+        } catch {
+          // ignore storage errors
+        }
+      }
+    } catch {
+      // ignore fetch errors if offline
+    } finally {
+      setReloadingVouchers(false);
+    }
+  };
 
   const handleReloadInitialHelpdeskLog = async () => {
     setReloadingHelpdeskLog(true);
@@ -219,7 +244,7 @@ export default function App() {
     }
   };
 
-  // Load persisted CMMS data once authenticated and hydrate 2026 Helpdesk Ticket Log if needed
+  // Load persisted CMMS data once authenticated and hydrate 2026 Helpdesk Ticket Log + Portal Vouchers if needed
   useEffect(() => {
     if (!authUser) return;
     let cancelled = false;
@@ -231,15 +256,23 @@ export default function App() {
         setDb(loaded);
         setIsLoaded(true);
 
-        let alreadySeededV2 = false;
+        let alreadySeededV4 = false;
         try {
-          alreadySeededV2 = window.localStorage.getItem(HELPDESK_SEED_KEY) === '1';
+          alreadySeededV4 = window.localStorage.getItem(HELPDESK_SEED_KEY) === '1';
         } catch {
-          alreadySeededV2 = false;
+          alreadySeededV4 = false;
+        }
+
+        let alreadySeededVouchersV1 = false;
+        try {
+          alreadySeededVouchersV1 =
+            window.localStorage.getItem(WIFI_VOUCHER_SEED_KEY) === '1';
+        } catch {
+          alreadySeededVouchersV1 = false;
         }
 
         const existingCount = loaded.helpdeskTickets?.length ?? 0;
-        if (existingCount === 0 || (!alreadySeededV2 && existingCount <= 374)) {
+        if (existingCount === 0 || (!alreadySeededV4 && existingCount <= 1415)) {
           try {
             const seededTickets = await fetchSeedHelpdeskTickets();
             if (!cancelled && seededTickets.length > 0) {
@@ -261,6 +294,30 @@ export default function App() {
               });
               try {
                 window.localStorage.setItem(HELPDESK_SEED_KEY, '1');
+              } catch {
+                // ignore
+              }
+            }
+          } catch {
+            // ignore if asset unavailable
+          }
+        }
+
+        const existingVoucherCount = loaded.wifiVouchers?.length ?? 0;
+        if (existingVoucherCount === 0 || !alreadySeededVouchersV1) {
+          try {
+            const seededVouchers = await fetchSeedWifiVouchers();
+            if (!cancelled && seededVouchers.length > 0) {
+              setDb((prev) => {
+                const next: CmmsDatabase = {
+                  ...prev,
+                  wifiVouchers: mergeWifiVouchers(prev.wifiVouchers, seededVouchers),
+                };
+                storageAdapter.save(next).catch(() => undefined);
+                return next;
+              });
+              try {
+                window.localStorage.setItem(WIFI_VOUCHER_SEED_KEY, '1');
               } catch {
                 // ignore
               }
@@ -1383,9 +1440,11 @@ export default function App() {
                   onBulkImportVouchers={(items) =>
                     updateDb((prev) => ({
                       ...prev,
-                      wifiVouchers: [...items, ...prev.wifiVouchers],
+                      wifiVouchers: mergeWifiVouchers(prev.wifiVouchers, items),
                     }))
                   }
+                  onReloadVouchers={handleReloadInitialVouchers}
+                  reloadingVouchers={reloadingVouchers}
                 />
               )}
 

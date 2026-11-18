@@ -145,8 +145,13 @@ export interface WifiAuthorizedDevice {
   department?: string;
 }
 
-export type VoucherDeviceType = 'Company Laptop' | 'Company Phone' | 'Personal Phone';
-export type VoucherStatus = 'Used' | 'Available';
+export type VoucherDeviceType =
+  | 'Company Laptop'
+  | 'Company Phone'
+  | 'Personal Phone'
+  | 'Tablet'
+  | 'Guest Device';
+export type VoucherStatus = 'Used' | 'Available' | 'Expired';
 
 export interface WifiVoucher {
   id: string;
@@ -156,6 +161,16 @@ export interface WifiVoucher {
   employeeNumber: string;
   deviceType: VoucherDeviceType;
   status: VoucherStatus;
+  userGroup?: string;
+  portalStatus?: string;
+  period?: string;
+  alias?: string;
+  createdAt?: string;
+  activatedAt?: string;
+  expiredAt?: string;
+  devices?: string;
+  macBinding?: string;
+  trafficUsed?: string;
 }
 
 export type ChatChannel =

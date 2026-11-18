@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ClipboardPaste,
@@ -10,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Tag,
   Trash2,
   Upload,
   Wallet,
@@ -18,8 +19,15 @@ import { HelpdeskTicket } from '../../types/cmms';
 import { exportToCsv } from '../../utils/csv';
 import {
   createTicketUid,
+  getTicketResolutionDays,
+  normalizeBranchLocation,
+  normalizeHelpdeskCategory,
+  OFFICIAL_BRANCH_LOCATIONS,
+  OFFICIAL_HELPDESK_CATEGORIES,
   parseHelpdeskTicketLog,
   parseTicketCostAmount,
+  suggestHelpdeskCategory,
+  summarizeHelpdeskCategories,
 } from '../../utils/helpdeskTickets';
 import { Modal } from '../ui/Modal';
 
@@ -28,16 +36,17 @@ interface HelpdeskTicketLogPanelProps {
   onSaveTickets: (nextTickets: HelpdeskTicket[]) => void;
   onReloadInitialLog?: () => Promise<void>;
   reloadingLog?: boolean;
+  requestedFilter?: {
+    category?: string;
+    branch?: string;
+    search?: string;
+    nonce: number;
+  } | null;
 }
 
 const PAGE_SIZE = 25;
 
-const DEFAULT_BRANCHES = [
-  'CONCHU WAREHOUSE',
-  'TANZA WAREHOUSE',
-  'TRISTELLAR BACOOR',
-  'JACK BUILDING',
-];
+const DEFAULT_BRANCHES = [...OFFICIAL_BRANCH_LOCATIONS];
 
 const DEFAULT_DEPARTMENTS = [
   'OPERATION',
@@ -47,17 +56,7 @@ const DEFAULT_DEPARTMENTS = [
   'HUMAN RESOURCE',
 ];
 
-const DEFAULT_CATEGORIES = [
-  'KIOSK',
-  'Dropbox',
-  'Network',
-  'DST',
-  'Printer',
-  'Computer/Peripherals',
-  'OS/MS Office',
-  'BIS/APPS',
-  'CCTV',
-];
+const DEFAULT_CATEGORIES = [...OFFICIAL_HELPDESK_CATEGORIES];
 
 const DEFAULT_WORK_NATURES = [
   'Provide Assistance',
@@ -84,6 +83,7 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
   onSaveTickets,
   onReloadInitialLog,
   reloadingLog = false,
+  requestedFilter = null,
 }) => {
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('ALL');
@@ -92,6 +92,20 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
   const [attendedFilter, setAttendedFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    if (!requestedFilter) return;
+    if (requestedFilter.branch !== undefined) {
+      setBranchFilter(requestedFilter.branch || 'ALL');
+    }
+    if (requestedFilter.category !== undefined) {
+      setCategoryFilter(requestedFilter.category || 'ALL');
+    }
+    if (requestedFilter.search !== undefined) {
+      setSearch(requestedFilter.search);
+    }
+    setPage(1);
+  }, [requestedFilter]);
 
   // Detail modal
   const [viewingTicket, setViewingTicket] = useState<HelpdeskTicket | null>(null);
@@ -137,11 +151,16 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
     const attended = new Set<string>(['PATRICK', 'FRANCIS', 'MAC', 'VHON']);
 
     for (const t of tickets) {
-      const b = t.branchLocation.trim().toUpperCase();
+      const b = normalizeBranchLocation(t.branchLocation || '');
       if (b) branches.add(b);
       const d = t.department.trim().toUpperCase();
       if (d) depts.add(d);
-      const cRaw = t.category.trim();
+      const cRaw = normalizeHelpdeskCategory(
+        t.category || '',
+        t.description,
+        t.classification,
+        t.solution
+      );
       if (cRaw && !categoryMap.has(cRaw.toUpperCase())) {
         categoryMap.set(cRaw.toUpperCase(), cRaw);
       }
@@ -159,24 +178,18 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
     };
   }, [tickets]);
 
-  const filteredTickets = useMemo(() => {
+  const preCategoryTickets = useMemo(() => {
     const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
       if (
         branchFilter !== 'ALL' &&
-        t.branchLocation.trim().toUpperCase() !== branchFilter
+        normalizeBranchLocation(t.branchLocation || '') !== branchFilter
       ) {
         return false;
       }
       if (
         deptFilter !== 'ALL' &&
         t.department.trim().toUpperCase() !== deptFilter
-      ) {
-        return false;
-      }
-      if (
-        categoryFilter !== 'ALL' &&
-        t.category.trim().toUpperCase() !== categoryFilter.toUpperCase()
       ) {
         return false;
       }
@@ -190,20 +203,30 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
         return false;
       }
       if (q) {
-        const hay = `${t.ticketNo} ${t.date} ${t.branchLocation} ${t.department} ${t.description} ${t.notedBy} ${t.attendedBy} ${t.solution} ${t.category} ${t.classification} ${t.remarks}`.toLowerCase();
+        const hay = `#${t.ticketNo} ${t.ticketNo} ${t.date} ${t.branchLocation} ${t.department} ${t.description} ${t.notedBy} ${t.attendedBy} ${t.solution} ${t.category} ${t.classification} ${t.remarks}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [
-    tickets,
-    search,
-    branchFilter,
-    deptFilter,
-    categoryFilter,
-    attendedFilter,
-    statusFilter,
-  ]);
+  }, [tickets, search, branchFilter, deptFilter, attendedFilter, statusFilter]);
+
+  const categorySummary = useMemo(
+    () => summarizeHelpdeskCategories(preCategoryTickets, false),
+    [preCategoryTickets]
+  );
+
+  const filteredTickets = useMemo(() => {
+    if (categoryFilter === 'ALL') return preCategoryTickets;
+    return preCategoryTickets.filter(
+      (t) =>
+        normalizeHelpdeskCategory(
+          t.category || '',
+          t.description,
+          t.classification,
+          t.solution
+        ).toUpperCase() === categoryFilter.toUpperCase()
+    );
+  }, [preCategoryTickets, categoryFilter]);
 
   const kpis = useMemo(() => {
     let resolved = 0;
@@ -293,9 +316,17 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
 
   const handleSaveTicket = (e: React.FormEvent) => {
     e.preventDefault();
+    const normalizedCategory = normalizeHelpdeskCategory(
+      formState.category,
+      formState.description,
+      formState.classification,
+      formState.solution
+    );
     const cleanTicket: HelpdeskTicket = {
       id: editingTicketId ?? createTicketUid(),
       ...formState,
+      branchLocation: normalizeBranchLocation(formState.branchLocation),
+      category: normalizedCategory,
       attendedBy: formState.attendedBy.trim().toUpperCase(),
       detailsOfNarration:
         formState.detailsOfNarration.trim() || formState.description.trim(),
@@ -613,6 +644,89 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
             ))}
           </select>
         </div>
+
+        {/* Category Quick-Filter & Most Needed Concern Strip */}
+        {categorySummary.categories.length > 0 && (
+          <div className="pt-2 border-t border-stone-100 dark:border-stone-800 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <div className="inline-flex items-center gap-1.5 text-stone-600 dark:text-stone-300">
+                <Tag className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
+                <span className="font-semibold">Concern Categorization</span>
+                {categorySummary.topCategory && (
+                  <span className="text-stone-500 dark:text-stone-400">
+                    · Most needed:{' '}
+                    <strong className="text-orange-700 dark:text-orange-400">
+                      {categorySummary.topCategory.category}
+                    </strong>{' '}
+                    ({categorySummary.topCategory.count.toLocaleString()} /{' '}
+                    {categorySummary.topCategory.sharePct.toFixed(1)}%)
+                  </span>
+                )}
+              </div>
+              {categoryFilter !== 'ALL' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCategoryFilter('ALL');
+                    setPage(1);
+                  }}
+                  className="text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                >
+                  Clear category filter
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setCategoryFilter('ALL');
+                  setPage(1);
+                }}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                  categoryFilter === 'ALL'
+                    ? 'bg-orange-600 text-white'
+                    : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-700'
+                }`}
+              >
+                All ({preCategoryTickets.length.toLocaleString()})
+              </button>
+              {categorySummary.categories.map((cat, idx) => {
+                const isSelected =
+                  categoryFilter.toUpperCase() === cat.category.toUpperCase();
+                return (
+                  <button
+                    key={cat.category}
+                    type="button"
+                    onClick={() => {
+                      setCategoryFilter(isSelected ? 'ALL' : cat.category);
+                      setPage(1);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors whitespace-nowrap ${
+                      isSelected
+                        ? 'bg-orange-600 text-white'
+                        : idx === 0
+                        ? 'bg-orange-50 dark:bg-orange-950/40 text-orange-800 dark:text-orange-300 border border-orange-200 dark:border-orange-900/60 hover:bg-orange-100 dark:hover:bg-orange-900/40'
+                        : 'bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-700'
+                    }`}
+                  >
+                    <span>{cat.category}</span>
+                    <span
+                      className={`font-mono tabular-nums ${
+                        isSelected
+                          ? 'text-orange-100'
+                          : 'text-stone-500 dark:text-stone-400'
+                      }`}
+                    >
+                      {cat.count.toLocaleString()}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Ticket Log Table */}
@@ -650,6 +764,7 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
                   const isDone =
                     t.status.toUpperCase().includes('DONE') ||
                     t.status.toUpperCase().includes('RESOLVED');
+                  const resDays = getTicketResolutionDays(t);
                   return (
                     <tr
                       key={t.id}
@@ -664,6 +779,17 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
                           <div className="text-[10px] text-stone-400">
                             Finish: {t.dateFinish}
                           </div>
+                        )}
+                        {resDays !== null && resDays >= 1 && (
+                          <span
+                            className={`inline-block mt-1 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              resDays >= 14
+                                ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                : 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                            }`}
+                          >
+                            {resDays}d solve
+                          </span>
                         )}
                       </td>
                       <td className="py-2.5 px-3 whitespace-nowrap">
@@ -827,6 +953,23 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
                 <span className="text-stone-900 dark:text-stone-100">
                   {viewingTicket.dateFinish || '—'}
                 </span>
+                {(() => {
+                  const d = getTicketResolutionDays(viewingTicket);
+                  if (d === null) return null;
+                  return (
+                    <span
+                      className={`ml-1.5 inline-block font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        d >= 14
+                          ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                          : d >= 1
+                          ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                          : 'bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-300'
+                      }`}
+                    >
+                      {d >= 1 ? `${d}d solve` : 'Same day'}
+                    </span>
+                  );
+                })()}
               </div>
               <div>
                 <span className="text-stone-500 dark:text-stone-400 block">Cost</span>
@@ -1093,9 +1236,34 @@ export const HelpdeskTicketLogPanel: React.FC<HelpdeskTicketLogPanelProps> = ({
             </div>
 
             <div>
-              <label className="block font-semibold text-stone-700 dark:text-stone-300 mb-1">
-                Category
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-stone-700 dark:text-stone-300">
+                  Category
+                </label>
+                {formState.description.trim().length >= 3 && (() => {
+                  const suggested = suggestHelpdeskCategory(
+                    formState.description,
+                    formState.classification
+                  );
+                  if (
+                    suggested &&
+                    suggested.toUpperCase() !== formState.category.trim().toUpperCase()
+                  ) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFormState((s) => ({ ...s, category: suggested }))
+                        }
+                        className="text-[11px] font-medium text-orange-600 dark:text-orange-400 hover:underline"
+                      >
+                        Use suggested: {suggested}
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
               <input
                 list="hd-categories"
                 value={formState.category}
