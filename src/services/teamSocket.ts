@@ -1,11 +1,5 @@
 import type { ItNote, OnlinePresenceUser, TeamChatMessage } from '../types/cmms';
 import { loadAuthSession } from './auth';
-import {
-  deleteItNoteFromSupabase,
-  deleteTeamChatMessageFromSupabase,
-  saveTeamChatMessageToSupabase,
-  upsertItNoteToSupabase,
-} from './storageAdapter';
 
 export type TeamSocketEvent =
   | {
@@ -370,7 +364,6 @@ class TeamSocketClient {
       ...cache,
       messages: mergeChatMessage(cache.messages, boundMessage),
     });
-    saveTeamChatMessageToSupabase(boundMessage).catch(() => undefined);
     this.postLocalBroadcast({ type: 'chat:created', message: boundMessage });
     this.sendFrame({
       type: 'chat:send',
@@ -384,7 +377,6 @@ class TeamSocketClient {
       ...cache,
       messages: cache.messages.filter((m) => m.id !== id),
     });
-    deleteTeamChatMessageFromSupabase(id).catch(() => undefined);
     this.postLocalBroadcast({ type: 'chat:deleted', id });
     this.sendFrame({ type: 'chat:delete', id });
   }
@@ -395,7 +387,6 @@ class TeamSocketClient {
       ...cache,
       notes: mergeItNote(cache.notes, note),
     });
-    upsertItNoteToSupabase(note).catch(() => undefined);
     this.postLocalBroadcast({ type: 'note:upserted', note });
     this.sendFrame({ type: 'note:upsert', note });
   }
@@ -406,7 +397,6 @@ class TeamSocketClient {
       ...cache,
       notes: cache.notes.filter((n) => n.id !== id),
     });
-    deleteItNoteFromSupabase(id).catch(() => undefined);
     this.postLocalBroadcast({ type: 'note:deleted', id });
     this.sendFrame({ type: 'note:delete', id });
   }

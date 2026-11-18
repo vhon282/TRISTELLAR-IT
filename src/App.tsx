@@ -54,10 +54,9 @@ import {
 } from './services/storageAdapter';
 import {
   getOrCreateClientId,
-  loadSavedOperator,
+  loadLocalTeamCache,
   mergeChatMessage,
   mergeItNote,
-  saveOperatorPreference,
   teamSocket,
 } from './services/teamSocket';
 import { ExecutiveDashboard } from './components/modules/ExecutiveDashboard';
@@ -175,19 +174,13 @@ export default function App() {
   const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
   const [itNotes, setItNotes] = useState<ItNote[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlinePresenceUser[]>([]);
-  const [wsConnected, setWsConnected] = useState(false);
-  const [operatorName, setOperatorName] = useState<string>(
-    () => loadAuthSession()?.displayName || loadSavedOperator()
-  );
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const clientIdRef = useRef<string>(getOrCreateClientId());
   const activeModuleRef = useRef<ActiveModule>(activeModule);
-  const operatorNameRef = useRef<string>(operatorName);
+  const operatorNameRef = useRef<string>(authUser?.displayName || '');
 
   useEffect(() => {
-    if (authUser) {
-      setOperatorName(authUser.displayName);
-    }
+    operatorNameRef.current = authUser?.displayName || '';
   }, [authUser]);
 
   useEffect(() => {
@@ -196,18 +189,6 @@ export default function App() {
       setUnreadChatCount(0);
     }
   }, [activeModule]);
-
-  useEffect(() => {
-    operatorNameRef.current = operatorName;
-    saveOperatorPreference(operatorName);
-    if (authUser) {
-      teamSocket.announcePresence({
-        clientId: clientIdRef.current,
-        userName: operatorName,
-        role: authUser.role || 'TRISTELLAR IT',
-      });
-    }
-  }, [operatorName, authUser]);
 
   const [reloadingHelpdeskLog, setReloadingHelpdeskLog] = useState(false);
 
@@ -239,52 +220,67 @@ export default function App() {
     }
   };
 
-  // Load persisted CMMS data once on mount and hydrate 2026 Helpdesk Ticket Log if needed
+  // Load persisted CMMS data once authenticated and hydrate 2026 Helpdesk Ticket Log if needed
   useEffect(() => {
-    storageAdapter.load().then(async (loaded) => {
-      setDb(loaded);
-      setIsLoaded(true);
+    if (!authUser) return;
+    let cancelled = false;
 
-      let alreadySeededV2 = false;
-      try {
-        alreadySeededV2 = window.localStorage.getItem(HELPDESK_SEED_KEY) === '1';
-      } catch {
-        alreadySeededV2 = false;
-      }
+    storageAdapter
+      .load()
+      .then(async (loaded) => {
+        if (cancelled) return;
+        setDb(loaded);
+        setIsLoaded(true);
 
-      const existingCount = loaded.helpdeskTickets?.length ?? 0;
-      if (!alreadySeededV2 && (existingCount === 0 || existingCount <= 374)) {
+        let alreadySeededV2 = false;
         try {
-          const seededTickets = await fetchSeedHelpdeskTickets();
-          if (seededTickets.length > 0) {
-            const seed2026Report = SEED_DATABASE.helpdeskReports.find(
-              (r) => r.year === 2026
-            );
-            setDb((prev) => {
-              const next: CmmsDatabase = {
-                ...prev,
-                helpdeskTickets: seededTickets,
-                helpdeskReports: seed2026Report
-                  ? prev.helpdeskReports.map((r) =>
-                      r.year === 2026 ? seed2026Report : r
-                    )
-                  : prev.helpdeskReports,
-              };
-              storageAdapter.save(next).catch(() => undefined);
-              return next;
-            });
-            try {
-              window.localStorage.setItem(HELPDESK_SEED_KEY, '1');
-            } catch {
-              // ignore
-            }
-          }
+          alreadySeededV2 = window.localStorage.getItem(HELPDESK_SEED_KEY) === '1';
         } catch {
-          // ignore if asset unavailable
+          alreadySeededV2 = false;
         }
-      }
-    });
-  }, []);
+
+        const existingCount = loaded.helpdeskTickets?.length ?? 0;
+        if (existingCount === 0 || (!alreadySeededV2 && existingCount <= 374)) {
+          try {
+            const seededTickets = await fetchSeedHelpdeskTickets();
+            if (!cancelled && seededTickets.length > 0) {
+              const seed2026Report = SEED_DATABASE.helpdeskReports.find(
+                (r) => r.year === 2026
+              );
+              setDb((prev) => {
+                const next: CmmsDatabase = {
+                  ...prev,
+                  helpdeskTickets: seededTickets,
+                  helpdeskReports: seed2026Report
+                    ? prev.helpdeskReports.map((r) =>
+                        r.year === 2026 ? seed2026Report : r
+                      )
+                    : prev.helpdeskReports,
+                };
+                storageAdapter.save(next).catch(() => undefined);
+                return next;
+              });
+              try {
+                window.localStorage.setItem(HELPDESK_SEED_KEY, '1');
+              } catch {
+                // ignore
+              }
+            }
+          } catch {
+            // ignore if asset unavailable
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIsLoaded(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser]);
 
   // Initial Team Chat/Notes REST hydration + WebSocket subscription when signed in
   useEffect(() => {
@@ -293,22 +289,42 @@ export default function App() {
       return;
     }
 
+    let cancelled = false;
+    let receivedSocketInit = false;
+
+    const applyLocalFallback = () => {
+      if (cancelled || receivedSocketInit) return;
+      const fallback = loadLocalTeamCache();
+      setTeamMessages(fallback.messages);
+      setItNotes(fallback.notes);
+      setOnlineUsers([
+        {
+          clientId: clientIdRef.current,
+          userName: authUser.displayName,
+          role: authUser.role || 'IT Support',
+        },
+      ]);
+    };
+
     fetch('https://instructor-concord-mai-drug.trycloudflare.com/api/team/state')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (!data) return;
+        if (cancelled) return;
+        if (!data) {
+          applyLocalFallback();
+          return;
+        }
         if (Array.isArray(data.messages)) setTeamMessages(data.messages);
         if (Array.isArray(data.notes)) setItNotes(data.notes);
         if (Array.isArray(data.onlineUsers)) setOnlineUsers(data.onlineUsers);
       })
-      .catch(() => undefined);
-
-    const unsubStatus = teamSocket.onStatus((connected) => {
-      setWsConnected(connected);
-    });
+      .catch(() => {
+        applyLocalFallback();
+      });
 
     const unsubEvents = teamSocket.onEvent((event) => {
       if (event.type === 'team:init') {
+        receivedSocketInit = true;
         setTeamMessages(event.messages);
         setItNotes(event.notes);
         setOnlineUsers(event.onlineUsers);
@@ -335,11 +351,11 @@ export default function App() {
     teamSocket.connect({
       clientId: clientIdRef.current,
       userName: authUser.displayName,
-      role: authUser.role || 'TRISTELLAR IT',
+      role: authUser.role || 'IT Support',
     });
 
     return () => {
-      unsubStatus();
+      cancelled = true;
       unsubEvents();
       teamSocket.disconnect();
     };
@@ -915,7 +931,6 @@ export default function App() {
         onLoginSuccess={(user) => {
           saveAuthSession(user);
           setAuthUser(user);
-          setOperatorName(user.displayName);
         }}
       />
     );
@@ -1428,10 +1443,9 @@ export default function App() {
                   messages={teamMessages}
                   notes={itNotes}
                   onlineUsers={onlineUsers}
-                  wsConnected={wsConnected}
                   assets={db.assets}
-                  operatorName={operatorName}
-                  onChangeOperatorName={setOperatorName}
+                  operatorName={authUser.displayName}
+                  operatorRole={authUser.role}
                   onSendMessage={(msg) => {
                     setTeamMessages((prev) => mergeChatMessage(prev, msg));
                     teamSocket.sendChatMessage(msg);
