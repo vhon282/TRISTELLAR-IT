@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
@@ -5,6 +6,7 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import type { Request, Response } from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type {
   ChatChannel,
   ItNote,
@@ -15,6 +17,27 @@ import type {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const SUPABASE_URL = (
+  process.env.VITE_SUPABASE_URL ||
+  process.env.SUPABASE_URL ||
+  ''
+).trim();
+const SUPABASE_ANON_KEY = (
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  ''
+).trim();
+
+const serverSupabase: SupabaseClient | null =
+  SUPABASE_URL &&
+  SUPABASE_ANON_KEY &&
+  /^https?:\/\//i.test(SUPABASE_URL) &&
+  !SUPABASE_URL.includes('your-project-id')
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false },
+      })
+    : null;
 
 const DATA_DIR = path.resolve(__dirname, '.data');
 const DATA_FILE = path.join(DATA_DIR, 'team-collab.json');
@@ -201,8 +224,62 @@ function makeId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+async function hydrateStoreFromSupabase(
+  fallback: TeamCollabStore
+): Promise<TeamCollabStore> {
+  if (!serverSupabase) return fallback;
+  try {
+    const [chatRes, noteRes] = await Promise.all([
+      serverSupabase
+        .from('team_chat_messages')
+        .select('*')
+        .order('created_at', { ascending: true }),
+      serverSupabase
+        .from('it_notes')
+        .select('*')
+        .order('updated_at', { ascending: false }),
+    ]);
+
+    if (chatRes.error || noteRes.error) {
+      return fallback;
+    }
+
+    const messages: TeamChatMessage[] = (chatRes.data ?? []).map((r) => ({
+      id: String(r.id),
+      channel: sanitizeChannel(r.channel),
+      sender: String(r.sender),
+      senderRole: r.sender_role ? String(r.sender_role) : undefined,
+      content: String(r.content),
+      assetCode: r.asset_code ? String(r.asset_code) : undefined,
+      branchLocation: r.branch_location ? String(r.branch_location) : undefined,
+      createdAt: String(r.created_at),
+    }));
+
+    const notes: ItNote[] = (noteRes.data ?? []).map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      content: String(r.content),
+      category: sanitizeCategory(r.category),
+      branchLocation: String(r.branch_location || 'All Branches'),
+      assetCode: r.asset_code ? String(r.asset_code) : undefined,
+      author: String(r.author),
+      pinned: Boolean(r.pinned),
+      createdAt: String(r.created_at),
+      updatedAt: String(r.updated_at),
+    }));
+
+    if (messages.length === 0 && notes.length === 0) {
+      return fallback;
+    }
+
+    return { version: 1, messages, notes };
+  } catch {
+    return fallback;
+  }
+}
+
 async function startServer(): Promise<void> {
-  const store = ensureStore();
+  const store = await hydrateStoreFromSupabase(ensureStore());
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
@@ -321,6 +398,24 @@ async function startServer(): Promise<void> {
 
           store.messages = [...store.messages, created].slice(-400);
           saveStore(store);
+          if (serverSupabase) {
+            serverSupabase
+              .from('team_chat_messages')
+              .upsert(
+                {
+                  id: created.id,
+                  channel: created.channel,
+                  sender: created.sender,
+                  sender_role: created.senderRole || 'IT Support',
+                  content: created.content,
+                  asset_code: created.assetCode || null,
+                  branch_location: created.branchLocation || null,
+                  created_at: created.createdAt,
+                },
+                { onConflict: 'id' }
+              )
+              .then(() => undefined, () => undefined);
+          }
           broadcast({ type: 'chat:created', message: created });
           return;
         }
@@ -332,6 +427,13 @@ async function startServer(): Promise<void> {
           store.messages = store.messages.filter((m) => m.id !== id);
           if (store.messages.length !== prevLen) {
             saveStore(store);
+            if (serverSupabase) {
+              serverSupabase
+                .from('team_chat_messages')
+                .delete()
+                .eq('id', id)
+                .then(() => undefined, () => undefined);
+            }
             broadcast({ type: 'chat:deleted', id });
           }
           return;
@@ -380,6 +482,26 @@ async function startServer(): Promise<void> {
             store.notes = [upserted, ...store.notes];
           }
           saveStore(store);
+          if (serverSupabase) {
+            serverSupabase
+              .from('it_notes')
+              .upsert(
+                {
+                  id: upserted.id,
+                  title: upserted.title,
+                  content: upserted.content,
+                  category: upserted.category,
+                  branch_location: upserted.branchLocation,
+                  asset_code: upserted.assetCode || null,
+                  author: upserted.author,
+                  pinned: upserted.pinned,
+                  created_at: upserted.createdAt,
+                  updated_at: upserted.updatedAt,
+                },
+                { onConflict: 'id' }
+              )
+              .then(() => undefined, () => undefined);
+          }
           broadcast({ type: 'note:upserted', note: upserted });
           return;
         }
@@ -391,6 +513,13 @@ async function startServer(): Promise<void> {
           store.notes = store.notes.filter((n) => n.id !== id);
           if (store.notes.length !== prevLen) {
             saveStore(store);
+            if (serverSupabase) {
+              serverSupabase
+                .from('it_notes')
+                .delete()
+                .eq('id', id)
+                .then(() => undefined, () => undefined);
+            }
             broadcast({ type: 'note:deleted', id });
           }
         }

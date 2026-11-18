@@ -2,7 +2,10 @@ import React, { useState } from 'react';
 import { Download, Upload, RotateCcw, CheckCircle2, AlertCircle, Database } from 'lucide-react';
 import { CmmsDatabase } from '../../types/cmms';
 import { Modal } from '../ui/Modal';
-import { normalizeDatabase } from '../../services/storageAdapter';
+import {
+  normalizeDatabase,
+  storageAdapter,
+} from '../../services/storageAdapter';
 
 interface BackupRestoreModalProps {
   isOpen: boolean;
@@ -84,7 +87,11 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
         onClose();
       }}
       title="Backup & Restore Workspace Data"
-      subtitle="All changes persist locally in your browser. Export JSON snapshots or prepare for cloud sync."
+      subtitle={
+        storageAdapter.providerName === 'supabase'
+          ? 'All changes persist to Supabase PostgreSQL with local browser backup. Export or restore JSON snapshots anytime.'
+          : 'Changes persist locally in your browser. Configure Supabase environment variables to enable cloud PostgreSQL sync.'
+      }
       maxWidthClass="max-w-xl"
     >
       <div className="space-y-5">
@@ -180,7 +187,10 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
         <div className="flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400 pt-1">
           <Database className="w-3.5 h-3.5 shrink-0" />
           <span>
-            Storage Adapter: localStorage (clean async repository ready for Firebase Firestore or Google Sheets).
+            Storage Adapter:{' '}
+            {storageAdapter.providerName === 'supabase'
+              ? 'Supabase PostgreSQL (with localStorage offline cache).'
+              : 'localStorage fallback (add VITE_SUPABASE_URL & VITE_SUPABASE_ANON_KEY to connect Supabase).'}
           </span>
         </div>
 

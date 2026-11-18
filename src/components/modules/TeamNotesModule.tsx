@@ -15,9 +15,6 @@ import {
   Users,
   Tag,
   MapPin,
-  Wifi,
-  WifiOff,
-  Check,
 } from 'lucide-react';
 import {
   Asset,
@@ -27,7 +24,7 @@ import {
   OnlinePresenceUser,
   TeamChatMessage,
 } from '../../types/cmms';
-import { BRANCHES, TECHNICIANS } from '../../data/seedData';
+import { BRANCHES } from '../../data/seedData';
 import { exportToCsv, generateUid } from '../../utils/csv';
 import { Modal } from '../ui/Modal';
 
@@ -35,10 +32,9 @@ interface TeamNotesModuleProps {
   messages: TeamChatMessage[];
   notes: ItNote[];
   onlineUsers: OnlinePresenceUser[];
-  wsConnected: boolean;
   assets: Asset[];
   operatorName: string;
-  onChangeOperatorName: (name: string) => void;
+  operatorRole?: string;
   onSendMessage: (msg: TeamChatMessage) => void;
   onDeleteMessage: (id: string) => void;
   onUpsertNote: (note: ItNote) => void;
@@ -91,8 +87,6 @@ const CATEGORY_STYLES: Record<NoteCategory, string> = {
     'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
 };
 
-const OPERATOR_PRESETS = [...TECHNICIANS, 'IT Admin'] as const;
-
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -108,18 +102,16 @@ function getOperatorRole(name: string): string {
   if (name === 'Mac') return 'IT Lead';
   if (name === 'Francis') return 'IT Support';
   if (name === 'Vhon') return 'IT Support';
-  if (name === 'IT Admin') return 'Administrator';
-  return 'IT Technician';
+  return 'IT Support';
 }
 
 export const TeamNotesModule: React.FC<TeamNotesModuleProps> = ({
   messages,
   notes,
   onlineUsers,
-  wsConnected,
   assets,
   operatorName,
-  onChangeOperatorName,
+  operatorRole,
   onSendMessage,
   onDeleteMessage,
   onUpsertNote,
@@ -129,10 +121,10 @@ export const TeamNotesModule: React.FC<TeamNotesModuleProps> = ({
 }) => {
   const [mobilePane, setMobilePane] = useState<'chat' | 'notes'>('chat');
   const [activeChannel, setActiveChannel] = useState<ChatChannel>('general-it');
-  const [customOperatorMode, setCustomOperatorMode] = useState(
-    !OPERATOR_PRESETS.includes(operatorName as (typeof OPERATOR_PRESETS)[number])
-  );
-  const [customOperatorInput, setCustomOperatorInput] = useState(operatorName);
+
+  const resolvedOperatorName = operatorName.trim() || 'IT Support';
+  const resolvedOperatorRole =
+    operatorRole?.trim() || getOperatorRole(resolvedOperatorName);
 
   // Chat composer state
   const [draftMessage, setDraftMessage] = useState('');
@@ -209,8 +201,8 @@ export const TeamNotesModule: React.FC<TeamNotesModuleProps> = ({
     const msg: TeamChatMessage = {
       id: generateUid('msg'),
       channel: activeChannel,
-      sender: operatorName.trim() || 'IT Tech',
-      senderRole: getOperatorRole(operatorName.trim() || 'IT Tech'),
+      sender: resolvedOperatorName,
+      senderRole: resolvedOperatorRole,
       content,
       assetCode: chatAssetCode || undefined,
       branchLocation: chatBranch || undefined,
@@ -274,7 +266,7 @@ export const TeamNotesModule: React.FC<TeamNotesModuleProps> = ({
       category: noteCategory,
       branchLocation: noteBranch || 'All Branches',
       assetCode: noteAssetCode.trim() || undefined,
-      author: editingNote?.author || operatorName.trim() || 'IT Tech',
+      author: editingNote?.author || resolvedOperatorName,
       pinned: notePinned,
       createdAt: editingNote?.createdAt || now,
       updatedAt: now,
@@ -311,117 +303,62 @@ export const TeamNotesModule: React.FC<TeamNotesModuleProps> = ({
   const activeChannelMeta =
     CHANNELS.find((c) => c.id === activeChannel) || CHANNELS[0];
 
+  const displayedOnlineUsers = useMemo<OnlinePresenceUser[]>(() => {
+    const byName = new Map<string, OnlinePresenceUser>();
+    for (const user of onlineUsers) {
+      const key = user.userName.trim().toLowerCase();
+      if (!key) continue;
+      if (!byName.has(key)) {
+        byName.set(key, user);
+      }
+    }
+    if (byName.size === 0 && resolvedOperatorName) {
+      byName.set(resolvedOperatorName.toLowerCase(), {
+        clientId: 'self',
+        userName: resolvedOperatorName,
+        role: resolvedOperatorRole,
+      });
+    }
+    return Array.from(byName.values());
+  }, [onlineUsers, resolvedOperatorName, resolvedOperatorRole]);
+
   return (
     <div className="space-y-4">
-      {/* Header & Operator Presence Bar */}
+      {/* Header & Logged-In Operator Presence Bar */}
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl p-4 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h1 className="text-lg font-display font-bold text-stone-900 dark:text-stone-100">
-              Team Chat &amp; Shared IT Notes
-            </h1>
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border whitespace-nowrap ${
-                wsConnected
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                  : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800'
-              }`}
-            >
-              {wsConnected ? (
-                <Wifi className="w-3 h-3" />
-              ) : (
-                <WifiOff className="w-3 h-3" />
-              )}
-              {wsConnected ? 'Live Sync Active' : 'Reconnecting'}
-            </span>
-          </div>
+          <h1 className="text-lg font-display font-bold text-stone-900 dark:text-stone-100">
+            Team Chat &amp; Shared IT Notes
+          </h1>
           <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
             Real-time IT support channels, shift handovers, and pinned branch runbooks across TRISTELLAR IT DEPT.
           </p>
         </div>
 
-        {/* Active Operator Switcher + Online Presence */}
+        {/* Locked Logged-In Operator + Online Presence */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 bg-stone-50 dark:bg-stone-950 border border-stone-200 dark:border-stone-800 rounded-lg px-2.5 py-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400 whitespace-nowrap">
               Posting as:
             </span>
-            {!customOperatorMode ? (
-              <select
-                value={
-                  OPERATOR_PRESETS.includes(
-                    operatorName as (typeof OPERATOR_PRESETS)[number]
-                  )
-                    ? operatorName
-                    : 'custom'
-                }
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (val === 'custom') {
-                    setCustomOperatorMode(true);
-                    setCustomOperatorInput(operatorName);
-                  } else {
-                    onChangeOperatorName(val);
-                  }
-                }}
-                aria-label="Select active IT operator"
-                className="text-xs font-semibold bg-transparent text-stone-900 dark:text-stone-100 focus:outline-none cursor-pointer"
-              >
-                {OPERATOR_PRESETS.map((op) => (
-                  <option
-                    key={op}
-                    value={op}
-                    className="bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100"
-                  >
-                    {op}
-                  </option>
-                ))}
-                <option
-                  value="custom"
-                  className="bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100"
-                >
-                  Custom Name...
-                </option>
-              </select>
-            ) : (
-              <div className="flex items-center gap-1">
-                <input
-                  type="text"
-                  value={customOperatorInput}
-                  onChange={(e) => setCustomOperatorInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && customOperatorInput.trim()) {
-                      onChangeOperatorName(customOperatorInput.trim());
-                      setCustomOperatorMode(false);
-                    }
-                  }}
-                  placeholder="Your name"
-                  className="w-24 text-xs px-1.5 py-0.5 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (customOperatorInput.trim()) {
-                      onChangeOperatorName(customOperatorInput.trim());
-                    }
-                    setCustomOperatorMode(false);
-                  }}
-                  aria-label="Apply custom operator name"
-                  className="p-1 rounded bg-orange-600 text-white hover:bg-orange-700"
-                >
-                  <Check className="w-3 h-3" />
-                </button>
-              </div>
-            )}
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded bg-orange-600 text-white font-display font-bold text-[10px] shrink-0">
+              {resolvedOperatorName.slice(0, 2).toUpperCase()}
+            </span>
+            <span className="text-xs font-semibold text-stone-900 dark:text-stone-100 whitespace-nowrap">
+              {resolvedOperatorName}
+            </span>
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-stone-200/80 dark:bg-stone-800 text-stone-600 dark:text-stone-300 whitespace-nowrap">
+              {resolvedOperatorRole}
+            </span>
           </div>
 
           {/* Online Technicians */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-stone-500 dark:text-stone-400 mr-0.5 whitespace-nowrap">
               <Users className="w-3.5 h-3.5" />
-              Online ({onlineUsers.length}):
+              Online ({displayedOnlineUsers.length}):
             </span>
-            {onlineUsers.map((u) => (
+            {displayedOnlineUsers.map((u) => (
               <span
                 key={u.clientId}
                 title={u.role}
