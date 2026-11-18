@@ -1,12 +1,20 @@
-import type { ItNote, OnlinePresenceUser, TeamChatMessage } from '../types/cmms';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import type {
+  ChatChannel,
+  ItNote,
+  NoteCategory,
+  OnlinePresenceUser,
+  TeamChatMessage,
+} from '../types/cmms';
 import { loadAuthSession } from './auth';
+import { getSupabaseClient } from './supabaseClient';
 
 export type TeamSocketEvent =
   | {
       type: 'team:init';
       messages: TeamChatMessage[];
       notes: ItNote[];
-      onlineUsers: OnlinePresenceUser[];
+      onlineUsers?: OnlinePresenceUser[];
     }
   | { type: 'presence:update'; onlineUsers: OnlinePresenceUser[] }
   | { type: 'chat:created'; message: TeamChatMessage }
@@ -14,26 +22,88 @@ export type TeamSocketEvent =
   | { type: 'note:upserted'; note: ItNote }
   | { type: 'note:deleted'; id: string };
 
+const VALID_CHANNELS = new Set<ChatChannel>([
+  'general-it',
+  'branch-support',
+  'maintenance-ops',
+  'parts-procurement',
+]);
+
+const VALID_NOTE_CATEGORIES = new Set<NoteCategory>([
+  'Handover',
+  'Runbook',
+  'Incident',
+  'Maintenance',
+  'Config',
+]);
+
+function sanitizeChannel(val: unknown): ChatChannel {
+  const s = String(val || '') as ChatChannel;
+  return VALID_CHANNELS.has(s) ? s : 'general-it';
+}
+
+function sanitizeNoteCategory(val: unknown): NoteCategory {
+  const s = String(val || '') as NoteCategory;
+  return VALID_NOTE_CATEGORIES.has(s) ? s : 'Handover';
+}
+
+function mapRowToChatMessage(row: Record<string, unknown>): TeamChatMessage {
+  return {
+    id: String(row.id),
+    channel: sanitizeChannel(row.channel),
+    sender: String(row.sender || 'IT Support'),
+    senderRole: row.sender_role ? String(row.sender_role) : undefined,
+    content: String(row.content || ''),
+    assetCode: row.asset_code ? String(row.asset_code) : undefined,
+    branchLocation: row.branch_location ? String(row.branch_location) : undefined,
+    createdAt: row.created_at ? String(row.created_at) : new Date().toISOString(),
+  };
+}
+
+function mapRowToItNote(row: Record<string, unknown>): ItNote {
+  const now = new Date().toISOString();
+  return {
+    id: String(row.id),
+    title: String(row.title || 'Untitled IT Note'),
+    content: String(row.content || ''),
+    category: sanitizeNoteCategory(row.category),
+    branchLocation: String(row.branch_location || 'All Branches'),
+    assetCode: row.asset_code ? String(row.asset_code) : undefined,
+    author: String(row.author || 'IT Support'),
+    pinned: Boolean(row.pinned),
+    createdAt: row.created_at ? String(row.created_at) : now,
+    updatedAt: row.updated_at ? String(row.updated_at) : now,
+  };
+}
+
 export function mergeChatMessage(
   prev: TeamChatMessage[],
   incoming: TeamChatMessage
 ): TeamChatMessage[] {
-  if (prev.some((m) => m.id === incoming.id)) {
-    return prev.map((m) => (m.id === incoming.id ? incoming : m));
-  }
-  return [...prev, incoming].slice(-400);
+  const next = prev.some((m) => m.id === incoming.id)
+    ? prev.map((m) => (m.id === incoming.id ? incoming : m))
+    : [...prev, incoming];
+  return next
+    .slice()
+    .sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    )
+    .slice(-400);
 }
 
 export function mergeItNote(prev: ItNote[], incoming: ItNote): ItNote[] {
-  if (prev.some((n) => n.id === incoming.id)) {
-    return prev.map((n) => (n.id === incoming.id ? incoming : n));
-  }
-  return [incoming, ...prev];
+  const next = prev.some((n) => n.id === incoming.id)
+    ? prev.map((n) => (n.id === incoming.id ? incoming : n))
+    : [incoming, ...prev];
+  return next.slice().sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
 }
 
 const CLIENT_ID_KEY = 'tristellar_team_client_id';
 const LOCAL_COLLAB_KEY = 'tristellar_team_collab_cache_v1';
-const BROADCAST_CHANNEL_NAME = 'tristellar_team_collab_bc_v1';
+const TEAM_REALTIME_CHANNEL = 'tristellar-team-collab';
 
 interface LocalCollabCache {
   messages: TeamChatMessage[];
@@ -184,58 +254,215 @@ export function getOrCreateClientId(): string {
 type EventListener = (event: TeamSocketEvent) => void;
 type StatusListener = (connected: boolean) => void;
 
-class TeamSocketClient {
-  private ws: WebSocket | null = null;
-  private bc: BroadcastChannel | null = null;
+class TeamRealtimeClient {
+  private channel: RealtimeChannel | null = null;
   private eventListeners = new Set<EventListener>();
   private statusListeners = new Set<StatusListener>();
-  private queue: string[] = [];
-  private reconnectTimer: number | null = null;
-  private retryAttempt = 0;
-  private intentionalClose = false;
   private currentPresence: OnlinePresenceUser | null = null;
   private connected = false;
-  private serverReachedOnce = false;
+  private subscribed = false;
+  private generation = 0;
 
   connect(presence: OnlinePresenceUser): void {
-    this.currentPresence = this.bindPresenceToAccount(presence);
-    this.intentionalClose = false;
-    this.retryAttempt = 0;
-    this.initBroadcastChannel();
+    const bound = this.bindPresenceToAccount(presence);
+    this.currentPresence = bound;
 
-    if (
-      this.ws &&
-      (this.ws.readyState === WebSocket.OPEN ||
-        this.ws.readyState === WebSocket.CONNECTING)
-    ) {
-      if (this.ws.readyState === WebSocket.OPEN) {
-        this.announcePresence(this.currentPresence);
-      }
+    if (this.channel && this.subscribed) {
+      void this.trackOperatorPresence(bound);
       return;
     }
 
-    this.openSocket();
-  }
-
-  private initBroadcastChannel(): void {
-    if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+    if (this.channel) {
       return;
     }
-    if (this.bc) return;
+
+    const gen = ++this.generation;
+    void this.loadInitialState();
+
     try {
-      this.bc = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
-      this.bc.onmessage = (evt) => {
-        if (this.connected) return;
-        const data = evt.data as TeamSocketEvent | undefined;
-        if (!data || typeof data.type !== 'string') return;
-        this.eventListeners.forEach((cb) => cb(data));
-      };
-    } catch {
-      this.bc = null;
+      const supabase = getSupabaseClient();
+      const channel = supabase.channel(TEAM_REALTIME_CHANNEL, {
+        config: {
+          presence: {
+            key: bound.clientId,
+          },
+        },
+      });
+
+      channel
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'team_chat_messages' },
+          (payload) => {
+            if (gen !== this.generation) return;
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const row = payload.new as Record<string, unknown> | null;
+              if (!row || !row.id) return;
+              const message = mapRowToChatMessage(row);
+              const cache = loadLocalTeamCache();
+              saveLocalTeamCache({
+                ...cache,
+                messages: mergeChatMessage(cache.messages, message),
+              });
+              this.emitEvent({ type: 'chat:created', message });
+            } else if (payload.eventType === 'DELETE') {
+              const oldRow = payload.old as Record<string, unknown> | null;
+              const id = oldRow?.id ? String(oldRow.id) : '';
+              if (!id) return;
+              const cache = loadLocalTeamCache();
+              saveLocalTeamCache({
+                ...cache,
+                messages: cache.messages.filter((m) => m.id !== id),
+              });
+              this.emitEvent({ type: 'chat:deleted', id });
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'it_notes' },
+          (payload) => {
+            if (gen !== this.generation) return;
+            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const row = payload.new as Record<string, unknown> | null;
+              if (!row || !row.id) return;
+              const note = mapRowToItNote(row);
+              const cache = loadLocalTeamCache();
+              saveLocalTeamCache({
+                ...cache,
+                notes: mergeItNote(cache.notes, note),
+              });
+              this.emitEvent({ type: 'note:upserted', note });
+            } else if (payload.eventType === 'DELETE') {
+              const oldRow = payload.old as Record<string, unknown> | null;
+              const id = oldRow?.id ? String(oldRow.id) : '';
+              if (!id) return;
+              const cache = loadLocalTeamCache();
+              saveLocalTeamCache({
+                ...cache,
+                notes: cache.notes.filter((n) => n.id !== id),
+              });
+              this.emitEvent({ type: 'note:deleted', id });
+            }
+          }
+        )
+        .on('presence', { event: 'sync' }, () => {
+          if (gen !== this.generation) return;
+          const onlineUsers = this.extractPresenceUsers(channel);
+          this.emitEvent({ type: 'presence:update', onlineUsers });
+        })
+        .subscribe((status) => {
+          if (gen !== this.generation) return;
+          if (status === 'SUBSCRIBED') {
+            this.subscribed = true;
+            this.setConnected(true);
+            if (this.currentPresence) {
+              void this.trackOperatorPresence(this.currentPresence);
+            }
+          } else if (
+            status === 'CLOSED' ||
+            status === 'CHANNEL_ERROR' ||
+            status === 'TIMED_OUT'
+          ) {
+            this.subscribed = false;
+            this.setConnected(false);
+          }
+        });
+
+      this.channel = channel;
+    } catch (err) {
+      console.error('Failed to connect to Supabase Realtime:', err);
+      this.setConnected(false);
     }
   }
 
-  private bindPresenceToAccount(presence: OnlinePresenceUser): OnlinePresenceUser {
+  async loadInitialState(): Promise<LocalCollabCache> {
+    try {
+      const supabase = getSupabaseClient();
+      const [chatRes, noteRes] = await Promise.all([
+        supabase
+          .from('team_chat_messages')
+          .select('*')
+          .order('created_at', { ascending: true })
+          .limit(400),
+        supabase
+          .from('it_notes')
+          .select('*')
+          .order('updated_at', { ascending: false }),
+      ]);
+
+      if (chatRes.error || noteRes.error) {
+        throw chatRes.error || noteRes.error;
+      }
+
+      const messages = (chatRes.data ?? []).map((row) =>
+        mapRowToChatMessage(row as Record<string, unknown>)
+      );
+      const notes = (noteRes.data ?? []).map((row) =>
+        mapRowToItNote(row as Record<string, unknown>)
+      );
+      const result: LocalCollabCache = { messages, notes };
+      saveLocalTeamCache(result);
+      this.emitEvent({ type: 'team:init', messages, notes });
+      return result;
+    } catch (err) {
+      console.error('Failed to load team chat/notes from Supabase:', err);
+      const fallback = loadLocalTeamCache();
+      this.emitEvent({
+        type: 'team:init',
+        messages: fallback.messages,
+        notes: fallback.notes,
+      });
+      return fallback;
+    }
+  }
+
+  private extractPresenceUsers(channel: RealtimeChannel): OnlinePresenceUser[] {
+    const state = channel.presenceState<Record<string, unknown>>();
+    const usersByClient = new Map<string, OnlinePresenceUser>();
+
+    for (const [presenceKey, metas] of Object.entries(state)) {
+      if (!Array.isArray(metas)) continue;
+      for (const rawMeta of metas) {
+        if (!rawMeta || typeof rawMeta !== 'object') continue;
+        const meta = rawMeta as Record<string, unknown>;
+        const operator = (
+          meta.operator && typeof meta.operator === 'object' ? meta.operator : meta
+        ) as Record<string, unknown>;
+        const clientId = String(operator.clientId || presenceKey || '').trim();
+        const userName = String(operator.userName || '').trim();
+        const role = String(operator.role || 'IT Support').trim();
+        if (!clientId || !userName) continue;
+        usersByClient.set(clientId, { clientId, userName, role });
+      }
+    }
+
+    return Array.from(usersByClient.values()).sort((a, b) =>
+      a.userName.localeCompare(b.userName)
+    );
+  }
+
+  private async trackOperatorPresence(
+    operator: OnlinePresenceUser
+  ): Promise<void> {
+    if (!this.channel || !this.subscribed) return;
+    try {
+      await this.channel.track({
+        operator: {
+          clientId: operator.clientId,
+          userName: operator.userName,
+          role: operator.role,
+        },
+        online_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('Failed to track operator presence:', err);
+    }
+  }
+
+  private bindPresenceToAccount(
+    presence: OnlinePresenceUser
+  ): OnlinePresenceUser {
     const session = loadAuthSession();
     if (!session) return presence;
     return {
@@ -245,79 +472,8 @@ class TeamSocketClient {
     };
   }
 
-  private openSocket(): void {
-    if (typeof window === 'undefined') return;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/ws/team`;
-
-    try {
-      const socket = new WebSocket(url);
-      this.ws = socket;
-
-      socket.onopen = () => {
-        this.retryAttempt = 0;
-        this.serverReachedOnce = true;
-        this.setConnected(true);
-        if (this.currentPresence) {
-          socket.send(
-            JSON.stringify({
-              type: 'presence:join',
-              ...this.currentPresence,
-            })
-          );
-        }
-        while (this.queue.length > 0 && socket.readyState === WebSocket.OPEN) {
-          const payload = this.queue.shift();
-          if (payload) socket.send(payload);
-        }
-      };
-
-      socket.onmessage = (evt) => {
-        try {
-          const parsed = JSON.parse(String(evt.data)) as TeamSocketEvent;
-          if (parsed.type === 'team:init') {
-            saveLocalTeamCache({
-              messages: parsed.messages,
-              notes: parsed.notes,
-            });
-          }
-          this.eventListeners.forEach((cb) => cb(parsed));
-        } catch {
-          // ignore malformed server frame
-        }
-      };
-
-      socket.onclose = () => {
-        this.ws = null;
-        this.setConnected(false);
-        if (!this.intentionalClose) {
-          this.scheduleReconnect();
-        }
-      };
-
-      socket.onerror = () => {
-        // onclose will handle backoff reconnect
-      };
-    } catch {
-      this.setConnected(false);
-      this.scheduleReconnect();
-    }
-  }
-
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer !== null) return;
-    // If hosted on a static origin without a WS server, cap retry attempts after 3 tries
-    if (!this.serverReachedOnce && this.retryAttempt >= 3) {
-      return;
-    }
-    const delay = Math.min(1000 * Math.pow(1.6, this.retryAttempt), 15000);
-    this.retryAttempt += 1;
-    this.reconnectTimer = window.setTimeout(() => {
-      this.reconnectTimer = null;
-      if (!this.intentionalClose) {
-        this.openSocket();
-      }
-    }, delay);
+  private emitEvent(event: TeamSocketEvent): void {
+    this.eventListeners.forEach((cb) => cb(event));
   }
 
   private setConnected(val: boolean): void {
@@ -326,49 +482,50 @@ class TeamSocketClient {
     this.statusListeners.forEach((cb) => cb(val));
   }
 
-  private sendFrame(payload: unknown): void {
-    const serialized = JSON.stringify(payload);
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(serialized);
-    } else if (this.serverReachedOnce || this.retryAttempt < 3) {
-      this.queue.push(serialized);
-    }
-  }
-
-  private postLocalBroadcast(event: TeamSocketEvent): void {
-    if (this.bc && !this.connected) {
-      try {
-        this.bc.postMessage(event);
-      } catch {
-        // ignore channel errors
-      }
-    }
-  }
-
   announcePresence(presence: OnlinePresenceUser): void {
-    this.currentPresence = this.bindPresenceToAccount(presence);
-    this.sendFrame({
-      type: 'presence:join',
-      ...this.currentPresence,
-    });
+    const bound = this.bindPresenceToAccount(presence);
+    this.currentPresence = bound;
+    void this.trackOperatorPresence(bound);
   }
 
   sendChatMessage(message: TeamChatMessage): void {
     const session = loadAuthSession();
-    const sender = session?.displayName || this.currentPresence?.userName || message.sender;
+    const sender =
+      session?.displayName || this.currentPresence?.userName || message.sender;
     const senderRole =
       session?.role || this.currentPresence?.role || message.senderRole;
     const boundMessage: TeamChatMessage = { ...message, sender, senderRole };
+
     const cache = loadLocalTeamCache();
     saveLocalTeamCache({
       ...cache,
       messages: mergeChatMessage(cache.messages, boundMessage),
     });
-    this.postLocalBroadcast({ type: 'chat:created', message: boundMessage });
-    this.sendFrame({
-      type: 'chat:send',
-      message: boundMessage,
-    });
+
+    void (async () => {
+      try {
+        const { error } = await getSupabaseClient()
+          .from('team_chat_messages')
+          .upsert(
+            {
+              id: boundMessage.id,
+              channel: boundMessage.channel,
+              sender: boundMessage.sender,
+              sender_role: boundMessage.senderRole || 'IT Support',
+              content: boundMessage.content,
+              asset_code: boundMessage.assetCode || null,
+              branch_location: boundMessage.branchLocation || null,
+              created_at: boundMessage.createdAt,
+            },
+            { onConflict: 'id' }
+          );
+        if (error) {
+          console.error('Failed to persist team chat message:', error);
+        }
+      } catch (err) {
+        console.error('Failed to persist team chat message:', err);
+      }
+    })();
   }
 
   deleteChatMessage(id: string): void {
@@ -377,8 +534,20 @@ class TeamSocketClient {
       ...cache,
       messages: cache.messages.filter((m) => m.id !== id),
     });
-    this.postLocalBroadcast({ type: 'chat:deleted', id });
-    this.sendFrame({ type: 'chat:delete', id });
+
+    void (async () => {
+      try {
+        const { error } = await getSupabaseClient()
+          .from('team_chat_messages')
+          .delete()
+          .eq('id', id);
+        if (error) {
+          console.error('Failed to delete team chat message:', error);
+        }
+      } catch (err) {
+        console.error('Failed to delete team chat message:', err);
+      }
+    })();
   }
 
   upsertNote(note: ItNote): void {
@@ -387,8 +556,33 @@ class TeamSocketClient {
       ...cache,
       notes: mergeItNote(cache.notes, note),
     });
-    this.postLocalBroadcast({ type: 'note:upserted', note });
-    this.sendFrame({ type: 'note:upsert', note });
+
+    void (async () => {
+      try {
+        const { error } = await getSupabaseClient()
+          .from('it_notes')
+          .upsert(
+            {
+              id: note.id,
+              title: note.title,
+              content: note.content,
+              category: note.category,
+              branch_location: note.branchLocation || 'All Branches',
+              asset_code: note.assetCode || null,
+              author: note.author,
+              pinned: Boolean(note.pinned),
+              created_at: note.createdAt,
+              updated_at: note.updatedAt,
+            },
+            { onConflict: 'id' }
+          );
+        if (error) {
+          console.error('Failed to persist IT note:', error);
+        }
+      } catch (err) {
+        console.error('Failed to persist IT note:', err);
+      }
+    })();
   }
 
   deleteNote(id: string): void {
@@ -397,8 +591,20 @@ class TeamSocketClient {
       ...cache,
       notes: cache.notes.filter((n) => n.id !== id),
     });
-    this.postLocalBroadcast({ type: 'note:deleted', id });
-    this.sendFrame({ type: 'note:delete', id });
+
+    void (async () => {
+      try {
+        const { error } = await getSupabaseClient()
+          .from('it_notes')
+          .delete()
+          .eq('id', id);
+        if (error) {
+          console.error('Failed to delete IT note:', error);
+        }
+      } catch (err) {
+        console.error('Failed to delete IT note:', err);
+      }
+    })();
   }
 
   onEvent(listener: EventListener): () => void {
@@ -417,21 +623,27 @@ class TeamSocketClient {
   }
 
   disconnect(): void {
-    this.intentionalClose = true;
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    if (this.bc) {
-      this.bc.close();
-      this.bc = null;
-    }
+    this.generation += 1;
+    this.subscribed = false;
+    const ch = this.channel;
+    this.channel = null;
     this.setConnected(false);
+
+    if (ch) {
+      void (async () => {
+        try {
+          await ch.untrack();
+        } catch {
+          // ignore untrack error if already disconnected
+        }
+        try {
+          await getSupabaseClient().removeChannel(ch);
+        } catch {
+          // ignore channel cleanup error
+        }
+      })();
+    }
   }
 }
 
-export const teamSocket = new TeamSocketClient();
+export const teamSocket = new TeamRealtimeClient();

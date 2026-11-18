@@ -54,7 +54,6 @@ import {
 } from './services/storageAdapter';
 import {
   getOrCreateClientId,
-  loadLocalTeamCache,
   mergeChatMessage,
   mergeItNote,
   teamSocket,
@@ -170,7 +169,7 @@ export default function App() {
   });
   const [previewBundle, setPreviewBundle] = useState<AssetBundle | null>(null);
 
-  // Real-time Team Chat & IT Notes state (server-authoritative via WebSocket)
+  // Real-time Team Chat & IT Notes state (Supabase Realtime + Presence)
   const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
   const [itNotes, setItNotes] = useState<ItNote[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<OnlinePresenceUser[]>([]);
@@ -282,52 +281,29 @@ export default function App() {
     };
   }, [authUser]);
 
-  // Initial Team Chat/Notes REST hydration + WebSocket subscription when signed in
+  // Initial Team Chat/Notes load + Supabase Realtime subscription & Presence when signed in
   useEffect(() => {
     if (!authUser) {
       teamSocket.disconnect();
+      setOnlineUsers([]);
       return;
     }
 
-    let cancelled = false;
-    let receivedSocketInit = false;
-
-    const applyLocalFallback = () => {
-      if (cancelled || receivedSocketInit) return;
-      const fallback = loadLocalTeamCache();
-      setTeamMessages(fallback.messages);
-      setItNotes(fallback.notes);
-      setOnlineUsers([
-        {
-          clientId: clientIdRef.current,
-          userName: authUser.displayName,
-          role: authUser.role || 'IT Support',
-        },
-      ]);
-    };
-
-    fetch('https://instructor-concord-mai-drug.trycloudflare.com/api/team/state')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled) return;
-        if (!data) {
-          applyLocalFallback();
-          return;
-        }
-        if (Array.isArray(data.messages)) setTeamMessages(data.messages);
-        if (Array.isArray(data.notes)) setItNotes(data.notes);
-        if (Array.isArray(data.onlineUsers)) setOnlineUsers(data.onlineUsers);
-      })
-      .catch(() => {
-        applyLocalFallback();
-      });
+    setOnlineUsers([
+      {
+        clientId: clientIdRef.current,
+        userName: authUser.displayName,
+        role: authUser.role || 'IT Support',
+      },
+    ]);
 
     const unsubEvents = teamSocket.onEvent((event) => {
       if (event.type === 'team:init') {
-        receivedSocketInit = true;
         setTeamMessages(event.messages);
         setItNotes(event.notes);
-        setOnlineUsers(event.onlineUsers);
+        if (event.onlineUsers) {
+          setOnlineUsers(event.onlineUsers);
+        }
       } else if (event.type === 'presence:update') {
         setOnlineUsers(event.onlineUsers);
       } else if (event.type === 'chat:created') {
@@ -355,7 +331,6 @@ export default function App() {
     });
 
     return () => {
-      cancelled = true;
       unsubEvents();
       teamSocket.disconnect();
     };

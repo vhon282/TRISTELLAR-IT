@@ -26,6 +26,7 @@ import {
 } from '../../types/cmms';
 import { BRANCHES } from '../../data/seedData';
 import { exportToCsv, generateUid } from '../../utils/csv';
+import { teamSocket } from '../../services/teamSocket';
 import { Modal } from '../ui/Modal';
 
 interface TeamNotesModuleProps {
@@ -163,6 +164,10 @@ export const TeamNotesModule: React.FC<TeamNotesModuleProps> = ({
     }
     return counts;
   }, [messages]);
+
+  useEffect(() => {
+    void teamSocket.loadInitialState();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
