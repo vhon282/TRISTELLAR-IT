@@ -38,6 +38,7 @@ import {
   TeamChatMessage,
   WifiAuthorizedDevice,
   WifiVoucher,
+  WifiVoucherSubmission,
 } from './types/cmms';
 import {
   DEFAULT_CHECKLIST,
@@ -72,6 +73,7 @@ import { HelpdeskReportModule } from './components/modules/HelpdeskReportModule'
 import { BackupRestoreModal } from './components/modals/BackupRestoreModal';
 import { GoogleSheetLinkModal } from './components/modals/GoogleSheetLinkModal';
 import { ScannedBundlePage } from './components/bundles/ScannedBundlePage';
+import { VoucherRegistrationPage } from './components/vouchers/VoucherRegistrationPage';
 import { LoginScreen } from './components/auth/LoginScreen';
 import {
   AuthUser,
@@ -79,6 +81,15 @@ import {
   loadAuthSession,
   saveAuthSession,
 } from './services/auth';
+import {
+  applyVoucherSubmissions,
+  deleteRemoteVoucherSubmission,
+  fetchRemoteVoucherSubmissions,
+  isVoucherFormRoute,
+  mergeVoucherSubmissionLists,
+  readLocalVoucherSubmissions,
+  subscribeVoucherSubmissions,
+} from './services/voucherSubmissions';
 
 interface NavItem {
   id: ActiveModule;
@@ -168,7 +179,11 @@ export default function App() {
     }
     return { active: false, bundle: null };
   });
+  const [voucherFormRoute] = useState<boolean>(() => isVoucherFormRoute());
   const [previewBundle, setPreviewBundle] = useState<AssetBundle | null>(null);
+  const [voucherSubmissions, setVoucherSubmissions] = useState<WifiVoucherSubmission[]>(
+    () => readLocalVoucherSubmissions()
+  );
 
   // Real-time Team Chat & IT Notes state (Supabase Realtime + Presence)
   const [teamMessages, setTeamMessages] = useState<TeamChatMessage[]>([]);
@@ -199,12 +214,27 @@ export default function App() {
   const handleReloadInitialVouchers = async () => {
     setReloadingVouchers(true);
     try {
-      const seededVouchers = await fetchSeedWifiVouchers();
-      if (seededVouchers.length > 0) {
-        updateDb((prev) => ({
-          ...prev,
-          wifiVouchers: mergeWifiVouchers(prev.wifiVouchers, seededVouchers),
-        }));
+      const [seededVouchers, remoteSubs] = await Promise.all([
+        fetchSeedWifiVouchers(),
+        fetchRemoteVoucherSubmissions(),
+      ]);
+      const allSubs = mergeVoucherSubmissionLists(
+        remoteSubs,
+        readLocalVoucherSubmissions()
+      );
+      setVoucherSubmissions(allSubs);
+      if (seededVouchers.length > 0 || allSubs.length > 0) {
+        updateDb((prev) => {
+          const mergedSeed =
+            seededVouchers.length > 0
+              ? mergeWifiVouchers(prev.wifiVouchers, seededVouchers)
+              : prev.wifiVouchers;
+          const applied = applyVoucherSubmissions(mergedSeed, allSubs);
+          return {
+            ...prev,
+            wifiVouchers: applied.vouchers,
+          };
+        });
         try {
           window.localStorage.setItem(WIFI_VOUCHER_SEED_KEY, '1');
         } catch {
@@ -246,7 +276,7 @@ export default function App() {
 
   // Load persisted CMMS data once authenticated and hydrate 2026 Helpdesk Ticket Log + Portal Vouchers if needed
   useEffect(() => {
-    if (!authUser) return;
+    if (!authUser || voucherFormRoute) return;
     let cancelled = false;
 
     storageAdapter
@@ -326,6 +356,32 @@ export default function App() {
             // ignore if asset unavailable
           }
         }
+
+        // Sync any public Ruijie voucher registration submissions (remote + local queue)
+        try {
+          const remoteSubs = await fetchRemoteVoucherSubmissions();
+          const allSubs = mergeVoucherSubmissionLists(
+            remoteSubs,
+            readLocalVoucherSubmissions()
+          );
+          if (!cancelled) {
+            setVoucherSubmissions(allSubs);
+          }
+          if (!cancelled && allSubs.length > 0) {
+            setDb((prev) => {
+              const applied = applyVoucherSubmissions(prev.wifiVouchers, allSubs);
+              if (!applied.changed) return prev;
+              const next: CmmsDatabase = {
+                ...prev,
+                wifiVouchers: applied.vouchers,
+              };
+              storageAdapter.save(next).catch(() => undefined);
+              return next;
+            });
+          }
+        } catch {
+          // ignore if submissions table is not yet created
+        }
       })
       .catch(() => {
         if (!cancelled) {
@@ -336,11 +392,29 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [authUser]);
+  }, [authUser, voucherFormRoute]);
+
+  // Listen for live Ruijie voucher registrations while signed into CMMS
+  useEffect(() => {
+    if (!authUser || voucherFormRoute) return;
+    return subscribeVoucherSubmissions((submission) => {
+      setVoucherSubmissions((prev) => mergeVoucherSubmissionLists([submission], prev));
+      setDb((prev) => {
+        const applied = applyVoucherSubmissions(prev.wifiVouchers, [submission]);
+        if (!applied.changed) return prev;
+        const next: CmmsDatabase = {
+          ...prev,
+          wifiVouchers: applied.vouchers,
+        };
+        storageAdapter.save(next).catch(() => undefined);
+        return next;
+      });
+    });
+  }, [authUser, voucherFormRoute]);
 
   // Initial Team Chat/Notes load + Supabase Realtime subscription & Presence when signed in
   useEffect(() => {
-    if (!authUser) {
+    if (!authUser || voucherFormRoute) {
       teamSocket.disconnect();
       setOnlineUsers([]);
       return;
@@ -941,6 +1015,10 @@ export default function App() {
     setSheetModalOpen(false);
   };
 
+  if (voucherFormRoute) {
+    return <VoucherRegistrationPage />;
+  }
+
   if (previewBundle || scannedRoute.active) {
     return (
       <ScannedBundlePage
@@ -1351,6 +1429,11 @@ export default function App() {
                   radioEntries={db.radioEntries}
                   wifiAuthorizedDevices={db.wifiAuthorizedDevices}
                   wifiVouchers={db.wifiVouchers}
+                  voucherSubmissions={voucherSubmissions}
+                  onDeleteVoucherSubmission={(id) => {
+                    setVoucherSubmissions((prev) => prev.filter((s) => s.id !== id));
+                    void deleteRemoteVoucherSubmission(id);
+                  }}
                   onSaveAnydesk={(entry: AnyDeskEntry) =>
                     updateDb((prev) => ({
                       ...prev,

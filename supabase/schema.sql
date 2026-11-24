@@ -195,8 +195,24 @@ CREATE TABLE IF NOT EXISTS public.wifi_vouchers (
   employee_name TEXT NOT NULL DEFAULT '',
   employee_number TEXT NOT NULL DEFAULT '',
   device_type TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('Used', 'Available')),
+  status TEXT NOT NULL CHECK (status IN ('Used', 'Available', 'Expired')),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 12B. PUBLIC RUIJIE WIFI VOUCHER REGISTRATION SUBMISSIONS
+CREATE TABLE IF NOT EXISTS public.wifi_voucher_submissions (
+  id TEXT PRIMARY KEY,
+  voucher_code TEXT NOT NULL,
+  full_name TEXT NOT NULL,
+  employee_number TEXT NOT NULL DEFAULT '',
+  user_group TEXT NOT NULL DEFAULT 'Employee' CHECK (user_group IN ('Employee', 'GUEST')),
+  department TEXT NOT NULL DEFAULT '',
+  branch_location TEXT NOT NULL DEFAULT '',
+  device_type TEXT NOT NULL DEFAULT 'Company Laptop',
+  alias TEXT NOT NULL DEFAULT '',
+  phone_number TEXT NOT NULL DEFAULT '',
+  mac_address TEXT NOT NULL DEFAULT '',
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 13. GOOGLE SHEETS QUICK LINKS
@@ -296,6 +312,7 @@ ALTER TABLE public.cctv_entries DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.radio_entries DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wifi_authorized_devices DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wifi_vouchers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wifi_voucher_submissions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.google_sheet_links DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.team_chat_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.it_notes DISABLE ROW LEVEL SECURITY;

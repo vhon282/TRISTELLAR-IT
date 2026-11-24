@@ -26,6 +26,7 @@ import {
   VoucherStatus,
   WifiAuthorizedDevice,
   WifiVoucher,
+  WifiVoucherSubmission,
 } from '../../types/cmms';
 import { BRANCHES } from '../../data/seedData';
 import { StatusBadge } from '../ui/StatusBadge';
@@ -34,6 +35,7 @@ import { ModuleGoogleSheetsBar } from '../ui/ModuleGoogleSheetsBar';
 import { CsvImportModal } from '../modals/CsvImportModal';
 import { exportToCsv, generateUid, pickField } from '../../utils/csv';
 import { isPortalVoucherRowSet, parsePortalVoucherRows } from '../../utils/wifiVouchers';
+import { buildRuijieVoucherFormUrl } from '../../services/voucherSubmissions';
 
 export type CommsSubTab = 'anydesk' | 'cctv' | 'radio' | 'wifi';
 
@@ -47,6 +49,7 @@ interface CommsDirectoryModuleProps {
   radioEntries: RadioEntry[];
   wifiAuthorizedDevices: WifiAuthorizedDevice[];
   wifiVouchers: WifiVoucher[];
+  voucherSubmissions?: WifiVoucherSubmission[];
   onSaveAnydesk: (entry: AnyDeskEntry) => void;
   onDeleteAnydesk: (id: string) => void;
   onBulkImportAnydesk: (entries: AnyDeskEntry[]) => void;
@@ -62,6 +65,7 @@ interface CommsDirectoryModuleProps {
   onSaveVoucher: (entry: WifiVoucher) => void;
   onDeleteVoucher: (id: string) => void;
   onBulkImportVouchers: (entries: WifiVoucher[]) => void;
+  onDeleteVoucherSubmission?: (id: string) => void;
   onReloadVouchers?: () => Promise<void>;
   reloadingVouchers?: boolean;
 }
@@ -76,6 +80,7 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   radioEntries,
   wifiAuthorizedDevices,
   wifiVouchers,
+  voucherSubmissions = [],
   onSaveAnydesk,
   onDeleteAnydesk,
   onBulkImportAnydesk,
@@ -91,6 +96,7 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
   onSaveVoucher,
   onDeleteVoucher,
   onBulkImportVouchers,
+  onDeleteVoucherSubmission,
   onReloadVouchers,
   reloadingVouchers = false,
 }) => {
@@ -1098,6 +1104,40 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
             </div>
           </div>
 
+          {/* Ruijie Captive Portal Redirect Form Link */}
+          <div className="p-3.5 rounded-xl bg-orange-50/70 dark:bg-orange-950/25 border border-orange-200 dark:border-orange-900/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-orange-900 dark:text-orange-200">
+                Ruijie Post-Voucher Redirect Form URL (GitHub Pages)
+              </p>
+              <p className="text-[11px] text-orange-800/80 dark:text-orange-300/80 mt-0.5">
+                Standalone user info form with no tabs or links — saves to Supabase &amp; redirects to tristellarcorp.com on submit.
+              </p>
+              <p className="mt-1 font-mono text-[11px] text-stone-700 dark:text-stone-300 truncate">
+                {buildRuijieVoucherFormUrl()}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => copyText(buildRuijieVoucherFormUrl(), 'ruijie-form-url')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-orange-600 text-white hover:bg-orange-700 transition-colors whitespace-nowrap"
+              >
+                {copiedId === 'ruijie-form-url' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Copied Form URL</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy Ruijie Form URL</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
           {/* Quick Voucher Assignment Form */}
           <form
             onSubmit={handleQuickAssignVoucher}
@@ -1326,9 +1366,16 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
                           <div className="font-medium text-stone-900 dark:text-stone-100">
                             {v.employeeName || '—'}
                           </div>
-                          {(v.alias || v.employeeNumber) && (
+                          {(v.alias || v.employeeNumber || v.department || v.branchLocation) && (
                             <div className="text-[11px] font-mono text-stone-500 dark:text-stone-400">
-                              {[v.alias, v.employeeNumber].filter(Boolean).join(' · ')}
+                              {[v.alias, v.employeeNumber, v.department, v.branchLocation]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </div>
+                          )}
+                          {v.phoneNumber && (
+                            <div className="text-[10px] font-mono text-stone-400">
+                              {v.phoneNumber}
                             </div>
                           )}
                         </td>
@@ -1371,6 +1418,104 @@ export const CommsDirectoryModule: React.FC<CommsDirectoryModuleProps> = ({
               </div>
             </section>
           </div>
+
+          {/* Ruijie Wi-Fi User Check-In Submissions */}
+          {voucherSubmissions.length > 0 && (
+            <section className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                    Ruijie Wi-Fi User Registrations ({voucherSubmissions.length})
+                  </h2>
+                  <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                    Live user info submitted from the standalone Ruijie redirect form ({buildRuijieVoucherFormUrl()})
+                  </p>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-[360px]">
+                <table className="w-full text-left border-collapse">
+                  <thead className="sticky top-0 z-10">
+                    <tr className="border-b border-stone-200 dark:border-stone-800 bg-stone-50 dark:bg-stone-800 text-[11px] font-semibold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Submitted</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">User / Type</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Branch &amp; Dept</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Device / Alias</th>
+                      <th className="px-3.5 py-2.5 whitespace-nowrap">Contact / MAC</th>
+                      <th className="px-3.5 py-2.5 text-right whitespace-nowrap">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-200 dark:divide-stone-800 text-xs">
+                    {voucherSubmissions.map((sub) => (
+                      <tr key={sub.id} className="hover:bg-stone-50/70 dark:hover:bg-stone-800/40">
+                        <td className="px-3.5 py-2.5 font-mono text-[11px] text-stone-500 dark:text-stone-400 whitespace-nowrap">
+                          {new Date(sub.submittedAt).toLocaleString()}
+                        </td>
+                        <td className="px-3.5 py-2.5">
+                          <div className="font-semibold text-stone-900 dark:text-stone-100">
+                            {sub.fullName}
+                          </div>
+                          <div className="text-[11px] font-mono text-stone-500 dark:text-stone-400">
+                            {sub.userGroup}
+                            {sub.employeeNumber ? ` · ${sub.employeeNumber}` : ''}
+                            {sub.voucherCode ? ` · Code: ${sub.voucherCode}` : ''}
+                          </div>
+                        </td>
+                        <td className="px-3.5 py-2.5 whitespace-nowrap">
+                          <div className="font-medium text-stone-800 dark:text-stone-200">
+                            {sub.branchLocation || '—'}
+                          </div>
+                          {sub.department && (
+                            <div className="text-[11px] text-stone-500 dark:text-stone-400">
+                              {sub.department}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-2.5 whitespace-nowrap">
+                          <div className="text-stone-800 dark:text-stone-200">{sub.deviceType}</div>
+                          {sub.alias && (
+                            <div className="text-[11px] font-mono text-stone-500 dark:text-stone-400">
+                              {sub.alias}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-2.5 font-mono text-[11px] text-stone-600 dark:text-stone-300 whitespace-nowrap">
+                          <div>{sub.phoneNumber || '—'}</div>
+                          {sub.macAddress && (
+                            <div className="text-[10px] text-stone-400">{sub.macAddress}</div>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-2.5 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAssignEmployeeName(sub.fullName);
+                                setAssignEmployeeNum(sub.employeeNumber || '');
+                                setAssignDeviceType(sub.deviceType);
+                              }}
+                              className="px-2 py-1 rounded text-[11px] font-medium text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/50 hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors"
+                            >
+                              Use in Assign
+                            </button>
+                            {onDeleteVoucherSubmission && (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteVoucherSubmission(sub.id)}
+                                className="p-1 text-stone-400 hover:text-rose-600"
+                                title="Delete Submission"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
       )}
 

@@ -165,12 +165,31 @@ export interface WifiVoucher {
   portalStatus?: string;
   period?: string;
   alias?: string;
+  branchLocation?: string;
+  department?: string;
+  phoneNumber?: string;
+  submittedAt?: string;
   createdAt?: string;
   activatedAt?: string;
   expiredAt?: string;
   devices?: string;
   macBinding?: string;
   trafficUsed?: string;
+}
+
+export interface WifiVoucherSubmission {
+  id: string;
+  voucherCode: string;
+  fullName: string;
+  employeeNumber: string;
+  userGroup: 'Employee' | 'GUEST';
+  department: string;
+  branchLocation: string;
+  deviceType: VoucherDeviceType;
+  alias: string;
+  phoneNumber: string;
+  macAddress?: string;
+  submittedAt: string;
 }
 
 export type ChatChannel =
