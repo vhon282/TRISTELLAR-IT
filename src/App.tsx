@@ -194,7 +194,7 @@ export default function App() {
   const [reloadingVouchers, setReloadingVouchers] = useState(false);
 
   const HELPDESK_SEED_KEY = 'tristellar_helpdesk_tickets_seeded_v4';
-  const WIFI_VOUCHER_SEED_KEY = 'tristellar_wifi_vouchers_seeded_v1';
+  const WIFI_VOUCHER_SEED_KEY = 'tristellar_wifi_vouchers_seeded_v2';
 
   const handleReloadInitialVouchers = async () => {
     setReloadingVouchers(true);
