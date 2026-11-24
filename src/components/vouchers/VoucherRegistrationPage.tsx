@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Loader2,
   ShieldCheck,
+  Ticket,
   Wifi,
 } from 'lucide-react';
 import { VoucherDeviceType, WifiVoucherSubmission } from '../../types/cmms';
@@ -76,9 +77,9 @@ function readQueryPrefills() {
 export const VoucherRegistrationPage: React.FC = () => {
   const prefills = useMemo(() => readQueryPrefills(), []);
 
+  const [voucherCode, setVoucherCode] = useState(prefills.voucherCode);
   const [userGroup, setUserGroup] = useState<'Employee' | 'GUEST'>(prefills.userGroup);
   const [fullName, setFullName] = useState('');
-  const [employeeNumber, setEmployeeNumber] = useState('');
   const [branchLocation, setBranchLocation] = useState<string>(prefills.matchedBranch);
   const [department, setDepartment] = useState(
     prefills.userGroup === 'GUEST' ? '' : 'OPERATION'
@@ -114,7 +115,13 @@ export const VoucherRegistrationPage: React.FC = () => {
     e.preventDefault();
     setErrorMsg('');
 
+    const cleanCode = voucherCode.trim();
     const cleanName = fullName.trim();
+
+    if (cleanCode.length < 3) {
+      setErrorMsg('Please enter your Ruijie Wi-Fi voucher ID.');
+      return;
+    }
     if (cleanName.length < 2) {
       setErrorMsg('Please enter your full name.');
       return;
@@ -124,9 +131,9 @@ export const VoucherRegistrationPage: React.FC = () => {
 
     const submission: WifiVoucherSubmission = {
       id: `wvs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-      voucherCode: prefills.voucherCode,
+      voucherCode: cleanCode,
       fullName: cleanName,
-      employeeNumber: userGroup === 'Employee' ? employeeNumber.trim() : '',
+      employeeNumber: '',
       userGroup,
       department: department.trim(),
       branchLocation,
@@ -170,10 +177,10 @@ export const VoucherRegistrationPage: React.FC = () => {
               <span>Ruijie Wi-Fi Access Registration</span>
             </div>
             <h1 className="font-display text-xl sm:text-2xl font-bold tracking-tight text-stone-900 dark:text-stone-100 mt-1">
-              Wi-Fi User Information
+              Wi-Fi Voucher User Information
             </h1>
             <p className="text-xs text-stone-500 dark:text-stone-400 mt-1 max-w-md">
-              Please complete your information and device details to finish network check-in.
+              Please enter your voucher ID and device details to finish network check-in.
             </p>
           </div>
         </div>
@@ -188,7 +195,8 @@ export const VoucherRegistrationPage: React.FC = () => {
               Registration Complete
             </h2>
             <p className="text-xs text-stone-600 dark:text-stone-300">
-              Information for <strong>{fullName.trim()}</strong> ({branchLocation}) has been recorded.
+              Voucher <span className="font-mono font-bold">{voucherCode.trim()}</span> has been recorded for{' '}
+              <strong>{fullName.trim()}</strong>.
             </p>
             <div className="inline-flex items-center gap-2 text-xs font-medium text-orange-600 dark:text-orange-400 pt-1">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -237,26 +245,28 @@ export const VoucherRegistrationPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Full Name & Branch */}
+            {/* Voucher ID & Branch */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div>
                 <label
-                  htmlFor="full-name-input"
+                  htmlFor="voucher-code-input"
                   className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1"
                 >
-                  {userGroup === 'Employee' ? 'Employee Full Name *' : 'Visitor Full Name *'}
+                  Voucher ID *
                 </label>
-                <input
-                  id="full-name-input"
-                  type="text"
-                  required
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder={
-                    userGroup === 'Employee' ? 'First Name Last Name' : 'Your full name'
-                  }
-                  className="w-full px-3 py-2.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
-                />
+                <div className="relative">
+                  <Ticket className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    id="voucher-code-input"
+                    type="text"
+                    required
+                    autoComplete="off"
+                    value={voucherCode}
+                    onChange={(e) => setVoucherCode(e.target.value)}
+                    placeholder="e.g. dmpykf"
+                    className="w-full pl-9 pr-3 py-2.5 text-sm font-mono font-semibold rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+                  />
+                </div>
               </div>
 
               <div>
@@ -282,26 +292,29 @@ export const VoucherRegistrationPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Employee ID & Department (or Company / Purpose for Guest) */}
-            {userGroup === 'Employee' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label
-                    htmlFor="employee-id-input"
-                    className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1"
-                  >
-                    Employee #
-                  </label>
-                  <input
-                    id="employee-id-input"
-                    type="text"
-                    value={employeeNumber}
-                    onChange={(e) => setEmployeeNumber(e.target.value)}
-                    placeholder="e.g. TTC-2883381"
-                    className="w-full px-3 py-2.5 text-xs font-mono rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
-                  />
-                </div>
+            {/* Full Name & Department / Company */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label
+                  htmlFor="full-name-input"
+                  className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1"
+                >
+                  {userGroup === 'Employee' ? 'Employee Full Name *' : 'Visitor Full Name *'}
+                </label>
+                <input
+                  id="full-name-input"
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder={
+                    userGroup === 'Employee' ? 'First Name Last Name' : 'Your full name'
+                  }
+                  className="w-full px-3 py-2.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+                />
+              </div>
 
+              {userGroup === 'Employee' ? (
                 <div>
                   <label
                     htmlFor="department-select"
@@ -323,26 +336,26 @@ export const VoucherRegistrationPage: React.FC = () => {
                     ))}
                   </select>
                 </div>
-              </div>
-            ) : (
-              <div>
-                <label
-                  htmlFor="guest-company-input"
-                  className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1"
-                >
-                  Company / Purpose of Visit *
-                </label>
-                <input
-                  id="guest-company-input"
-                  type="text"
-                  required
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                  placeholder="e.g. Supplier Meeting / Audit / Client"
-                  className="w-full px-3 py-2.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
-                />
-              </div>
-            )}
+              ) : (
+                <div>
+                  <label
+                    htmlFor="guest-company-input"
+                    className="block text-xs font-semibold text-stone-700 dark:text-stone-300 mb-1"
+                  >
+                    Company / Purpose of Visit *
+                  </label>
+                  <input
+                    id="guest-company-input"
+                    type="text"
+                    required
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    placeholder="e.g. Supplier Meeting / Client"
+                    className="w-full px-3 py-2.5 text-xs rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-950 text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Device Type & Alias */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
